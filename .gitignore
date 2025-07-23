@@ -1,0 +1,7 @@
+# IDEs
+/.idea
+/.vscode
+
+# Directories for testing
+/.results
+/.samples
