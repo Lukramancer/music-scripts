@@ -213,7 +213,8 @@ def create_argument_parser() -> ArgumentParser:
     ffmpeg_arguments_group = arguments_parser.add_argument_group("ffmpeg and ffprobe")
     ffmpeg_arguments_group.add_argument("--ffmpeg-path", "--ffmpeg", type=Path, default=Path("ffmpeg"), help="Path to ffmpeg executable")
     ffmpeg_arguments_group.add_argument("--ffprobe-path", "--ffprobe", type=Path, default=Path("ffprobe"), help="Path to ffprobe executable")
-    ffmpeg_arguments_group.add_argument("--extra-ffmpeg-arguments", nargs=REMAINDER, default=[], type=str, help="Extra arguments passed to ffmpeg", required=False)
+    ffmpeg_arguments_group.add_argument("--extra-ffmpeg-arguments", nargs=REMAINDER, action="extend", default=[], type=str, help="Extra arguments passed to ffmpeg", required=False)
+    ffmpeg_arguments_group.add_argument("--ffmpeg-codec-copy", const=["-c", "copy"], action="store_const", dest="extra_ffmpeg_arguments", help="Add \"-c copy\" arguments to ffmpeg run")
 
     return arguments_parser
 

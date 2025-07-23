@@ -316,7 +316,8 @@ def create_argument_parser() -> ArgumentParser:
     actions_arguments_group.add_argument("--integration-targets", "--integrate", type=LyricsTargetType, choices=list(LyricsTargetType), help="Lyrics to integrate into files tags", default=LyricsTargetType.NONE)
     actions_arguments_group.add_argument("--save-targets", "--save", type=LyricsTargetType, choices=list(LyricsTargetType), help="Lyrics to save as separate files", default=LyricsTargetType.ALL)
 
-    arguments_parser.add_argument("--extra-ffmpeg-arguments", nargs=REMAINDER, default=[], type=str, help="Extra arguments passed to ffmpeg during lyrics integration", required=False)
+    arguments_parser.add_argument("--ffmpeg-codec-copy", const=["-c", "copy"], action="store_const", dest="extra_ffmpeg_arguments", help="Add \"-c copy\" arguments to ffmpeg run")
+    arguments_parser.add_argument("--extra-ffmpeg-arguments", nargs=REMAINDER, default=[], action="extend", type=str, help="Extra arguments passed to ffmpeg during lyrics integration", required=False)
 
     return arguments_parser
 
