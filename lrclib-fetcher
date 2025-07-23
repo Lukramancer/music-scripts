@@ -1,0 +1,342 @@
+#!/bin/env python3
+
+from json import loads as load_json_from_string, load as load_json
+from subprocess import run as run_subprocess
+from urllib.request import urlopen, Request
+from urllib.parse import urlencode
+from urllib.error import HTTPError
+from re import compile as compile_regexp, Pattern
+from pathlib import Path
+from typing import Optional, Iterable
+from enum import Enum, StrEnum, auto as enum_auto
+from argparse import ArgumentParser, REMAINDER
+from dataclasses import dataclass
+from tempfile import NamedTemporaryFile
+from shutil import move
+from os import chmod, chown, replace
+
+
+class LyricsType(Enum):
+    PLAIN = enum_auto()
+    SYNCED = enum_auto()
+
+
+class LyricsTargetType(StrEnum):
+    NONE = enum_auto()
+    SYNCED = enum_auto()
+    PLAIN = enum_auto()
+    ALL = enum_auto()
+
+    def is_it(self, lyrics_type: LyricsType) -> bool:
+        if self.value == "none":
+            return False
+        elif self.value == "all":
+            return True
+        else:
+            return (self.value == "plain" and lyrics_type == LyricsType.PLAIN) or \
+                (self.value == "synced" and lyrics_type == LyricsType.SYNCED)
+
+    def __str__(self):
+        return self.value
+
+
+def get_lyrics(
+    track_name: str,
+    artist_name: str,
+    album_name: str,
+    track_duration: float | int,
+    user_agent: Optional[str] = None
+) -> Optional[tuple[LyricsType, str]]:
+    """ Requests lyrics from lrclib.net via "/api/get"
+
+    Args:
+        track_name: str - name of requesting track
+        artist_name: str - name of artist of requesting track
+        album_name: str - name of album of requesting track
+        track_duration: float | int - duration of requesting track in seconds
+        user_agent: str - user agent forlrclib
+    """
+
+    lyrics_get_request_url_host = "lrclib.net"
+    lyrics_get_request_url_path = "/api/get"
+    lyrics_get_request_url_query_parameters = urlencode({
+        "track_name": track_name,
+        "artist_name": artist_name,
+        "album_name": album_name,
+        "duration": str(int(track_duration)),
+    })
+    lyrics_get_request_url = "https://" + lyrics_get_request_url_host + lyrics_get_request_url_path + "?" + lyrics_get_request_url_query_parameters
+
+    lyrics_get_request = Request(lyrics_get_request_url)
+
+    if user_agent is not None:
+        lyrics_get_request.set_header("User-Agent", user_agent)
+
+    try:
+        with urlopen(lyrics_get_request) as response:
+            lyrics_reponse_info = load_json(response)
+            if "syncedLyrics" in lyrics_reponse_info and isinstance(synced_lyrics := lyrics_reponse_info["syncedLyrics"], str):
+                return (LyricsType.SYNCED, synced_lyrics)
+            elif "plainLyrics" in lyrics_reponse_info and isinstance(plain_lyrics := lyrics_reponse_info["plainLyrics"], str):
+                return (LyricsType.PLAIN, plain_lyrics)
+            else:
+                return None
+    except HTTPError as http_error:
+        if http_error.code == 404:
+            return None
+        else:
+            raise http_error
+
+
+DEFAULT_TRACK_NAME_TAG_PATTERN: Pattern = compile_regexp(r"(?i)title")
+DEAFULT_ARTIST_NAME_TAG_PATTERN: Pattern = compile_regexp(r"(?i)artist")
+DEFAULT_ALBUM_NAME_TAG_PATTERN: Pattern = compile_regexp(r"(?i)album")
+
+
+class InformationNotFoundError(Exception):
+    was_track_name_found: bool = False
+    was_artist_name_found: bool = False
+    was_album_name_found: bool = False
+
+    def __init__(
+        was_track_name_found: bool,
+        was_artist_name_found: bool,
+        was_album_name_found: bool
+    ):
+        not_found_contents: list[str] = []
+        if not was_track_name_found:
+            not_found_contents.append("track name")
+        if not was_artist_name_found:
+            not_found_contents.append("artist")
+        if not was_album_name_found:
+            not_found_contents.append("album")
+
+        message = "Could not find tags of " + ", ".join(not_found_contents)
+        super().__init__(message)
+
+        self.was_track_name_found = was_track_name_found
+        self.was_artist_name_found = was_artist_name_found
+        self.was_album_name_found = was_album_name_found
+
+
+def get_lyrics_by_file(
+    file_path: Path,
+    track_name_tag_pattern: Pattern = DEFAULT_TRACK_NAME_TAG_PATTERN,
+    artist_name_tag_pattern: Pattern = DEAFULT_ARTIST_NAME_TAG_PATTERN,
+    album_name_tag_pattern: Pattern = DEFAULT_ALBUM_NAME_TAG_PATTERN,
+    ffprobe_path: Path = Path("ffprobe"),
+    user_agent: Optional[str] = None
+) -> Optional[tuple[LyricsType, str]]:
+    ffprobe_run = run_subprocess(
+        executable=ffprobe_path,
+        args=["ffprobe", "-loglevel", "quiet", "-show_format", "-of", "json", "-i", file_path],
+        capture_output=True,
+        text=True
+    )
+
+    file_info = load_json_from_string(ffprobe_run.stdout)["format"]
+    track_duration = float(file_info["duration"])
+
+    track_name: Optional[str] = None
+    artist_name: Optional[str] = None
+    album_name: Optional[str] = None
+    for tag_name, tag_value in file_info["tags"].items():
+        if track_name_tag_pattern.fullmatch(tag_name) is not None:
+            track_name = tag_value
+        if artist_name_tag_pattern.fullmatch(tag_name) is not None:
+            artist_name = tag_value
+        if album_name_tag_pattern.fullmatch(tag_name) is not None:
+            album_name = tag_value
+
+    if None in [track_name, artist_name, album_name]:
+        raise InformationNotFoundError(map(lambda i: i is not None, [track_name, artist_name, album_name]))
+    
+    return get_lyrics(track_name, artist_name, album_name, track_duration, user_agent=user_agent)
+
+
+def integrate_lyrics_into_tags(
+    file_path: Path,
+    lyrics: str,
+    output_file_path: Path,
+    ffmpeg_path: Path = Path("ffmpeg"),
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None
+):
+    ffmpeg_arguments: list[str | Path] = ["ffmpeg", "-i", file_path, "-metadata", f"lyrics={lyrics}"]
+
+    if extra_ffmpeg_arguments is not None:
+        ffmpeg_arguments.extend(extra_ffmpeg_arguments)
+
+    ffmpeg_arguments.append(output_file_path)
+
+    ffmpeg_run = run_subprocess(
+        executable=ffmpeg_path,
+        args=ffmpeg_arguments,
+        capture_output=True,
+        text=True
+    )
+
+
+@dataclass
+class ProcessingReport:
+    file_path: Path
+    error: Optional[Exception] = None
+    are_lyrics_found: bool = False
+    found_lyrics_type: Optional[LyricsType] = None
+    output_file_path: Optional[Path] = None
+    is_success: bool = False
+
+
+def save_lyrics_file(
+    music_file_path: Path,
+    lyrics_content: str,
+    lyrics_type: LyricsType,
+    encoding: Optional[str] = "utf-8"
+):
+    if encoding is None:
+        encoding = "utf-8"
+    
+    lyrics_file_suffix = ".lrc" if lyrics_type == LyricsType.SYNCED else ".txt"
+    lyrics_file_path = music_file_path.with_suffix(lyrics_file_suffix)
+
+    with open(lyrics_file_path, mode="wt", encoding=encoding) as lyrics_file:
+        lyrics_file.write(lyrics_content)
+    
+    return lyrics_file_path
+
+
+def process_file(
+    file_path: Path,
+    track_name_tag_pattern: Pattern = DEFAULT_TRACK_NAME_TAG_PATTERN,
+    artist_name_tag_pattern: Pattern = DEAFULT_ARTIST_NAME_TAG_PATTERN,
+    album_name_tag_pattern: Pattern = DEFAULT_ALBUM_NAME_TAG_PATTERN,
+    ffprobe_path: Path = Path("ffprobe"),
+    ffmpeg_path: Path = Path("ffmpeg"),
+    output_encoding: str = "utf-8",
+    user_agent: Optional[str] = None,
+    save_targets: LyricsTargetType = LyricsTargetType.PLAIN,
+    integration_targets: LyricsTargetType = LyricsTargetType.NONE,
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None
+):
+    processing_report = ProcessingReport(file_path)
+
+    try:
+        found_lyrics = get_lyrics_by_file(
+            file_path=file_path,
+            track_name_tag_pattern=track_name_tag_pattern,
+            artist_name_tag_pattern=artist_name_tag_pattern,
+            album_name_tag_pattern=album_name_tag_pattern,
+            ffprobe_path=ffprobe_path,
+            user_agent=user_agent
+        )
+    except Exception as error:
+        processing_report.error = error
+        return processing_report
+
+    if found_lyrics is None:
+        processing_report.are_lyrics_found = False
+        return processing_report
+    
+    lyrics_type, lyrics_content = found_lyrics
+
+    processing_report.are_lyrics_found = True
+    processing_report.found_lyrics_type = lyrics_type
+
+    if save_targets.is_it(lyrics_type):
+        try:
+            processing_report.output_file_path = save_lyrics_file(file_path, lyrics_content, lyrics_type, output_encoding)
+        except Exception as error:
+            processing_report.error = error
+            return processing_report
+    
+    if integration_targets.is_it(lyrics_type):
+        try:
+            lyrics_integrated_file_path: Optional[Path] = None
+            with NamedTemporaryFile(suffix=file_path.suffix, mode="rb", delete=False) as lyrics_integrated_file:
+                lyrics_integrated_file_path = lyrics_integrated_file.name
+
+                processing_report.output_file_path = integrate_lyrics_into_tags(file_path, lyrics_content, lyrics_integrated_file_path, ffmpeg_path, extra_ffmpeg_arguments)
+            
+            file_stat = file_path.stat()
+            chmod(lyrics_integrated_file_path, file_stat.st_mode)
+            chown(lyrics_integrated_file_path, file_stat.st_uid, file_stat.st_gid)
+            move(lyrics_integrated_file_path, file_path)
+        except Exception as error:
+            processing_report.error = error
+            return processing_report
+    
+    processing_report.is_success = True
+    return processing_report
+
+
+def process_files(
+    target_files: Iterable[Path],
+    track_name_tag_pattern: Pattern = DEFAULT_TRACK_NAME_TAG_PATTERN,
+    artist_name_tag_pattern: Pattern = DEAFULT_ARTIST_NAME_TAG_PATTERN,
+    album_name_tag_pattern: Pattern = DEFAULT_ALBUM_NAME_TAG_PATTERN,
+    ffprobe_path: Path = Path("ffprobe"),
+    ffmpeg_path: Path = Path("ffmpeg"),
+    output_encoding: str = "utf-8",
+    user_agent: Optional[str] = None,
+    save_targets: LyricsTargetType = LyricsTargetType.PLAIN,
+    integration_targets: LyricsTargetType = LyricsTargetType.NONE,
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None
+) -> Iterable[ProcessingReport]:
+    for file_path in target_files:
+        yield process_file(
+            file_path=file_path,
+            track_name_tag_pattern=track_name_tag_pattern,
+            artist_name_tag_pattern=artist_name_tag_pattern,
+            album_name_tag_pattern=album_name_tag_pattern,
+            ffprobe_path=ffprobe_path,
+            ffmpeg_path=ffmpeg_path,
+            output_encoding=output_encoding,
+            user_agent=user_agent,
+            save_targets=save_targets,
+            integration_targets=integration_targets,
+            extra_ffmpeg_arguments=extra_ffmpeg_arguments
+        )
+
+
+def create_argument_parser() -> ArgumentParser:
+    arguments_parser = ArgumentParser("lrclib-fetcher", description="Script for fetching lyrics from lrclib.net")
+    arguments_parser.add_argument("target_files", nargs='+', type=Path, help="Files to process")
+
+    tags_arguments_group = arguments_parser.add_argument_group("tags")
+    tags_arguments_group.add_argument("--track-name-tag-pattern", "--track-name-tag", type=compile_regexp, help="Regular expression to find title tag", default=DEFAULT_TRACK_NAME_TAG_PATTERN)
+    tags_arguments_group.add_argument("--artist-name-tag-pattern", "--artist-name-tag", type=compile_regexp, help="Regular expression to find artist tag", default=DEAFULT_ARTIST_NAME_TAG_PATTERN)
+    tags_arguments_group.add_argument("--album-name-tag-pattern", "--album-name-tag", type=compile_regexp, help="Regular expression to find album tag", default=DEFAULT_ALBUM_NAME_TAG_PATTERN)
+
+    arguments_parser.add_argument("--user-agent", type=str, help="User agent for request", required=False, default="lrclib-fetcher")
+    arguments_parser.add_argument("--ffprobe-path", "--ffprobe", type=Path, help="Path to ffprobe executable", default=Path("ffprobe"))
+    arguments_parser.add_argument("--ffmpeg-path", "--ffmpeg", type=Path, help="Path to ffmpeg executable", default=Path("ffmpeg"))
+    arguments_parser.add_argument("--output-encoding", "--encoding", type=str, help="Encoding of generated lyrics files", default="utf-8")
+
+    actions_arguments_group = arguments_parser.add_argument_group("actions")
+    actions_arguments_group.add_argument("--integration-targets", "--integrate", type=LyricsTargetType, choices=list(LyricsTargetType), help="Lyrics to integrate into files tags", default=LyricsTargetType.NONE)
+    actions_arguments_group.add_argument("--save-targets", "--save", type=LyricsTargetType, choices=list(LyricsTargetType), help="Lyrics to save as separate files", default=LyricsTargetType.ALL)
+
+    arguments_parser.add_argument("--extra-ffmpeg-arguments", nargs=REMAINDER, default=[], type=str, help="Extra arguments passed to ffmpeg during lyrics integration", required=False)
+
+    return arguments_parser
+
+
+def main(arguments, output):
+    arguments_parser = create_argument_parser()
+
+    parsed_arguments = arguments_parser.parse_args(arguments)
+
+    for processing_report in process_files(**vars(parsed_arguments)):
+        if processing_report.error is not None:
+            output.write(f"{processing_report.file_path} ERROR: {processing_report.error}\n")
+        elif not processing_report.are_lyrics_found:
+            output.write(f"{processing_report.file_path} NOT FOUND\n")
+        elif processing_report.is_success and processing_report.found_lyrics_type == LyricsType.SYNCED:
+            output.write(f"{processing_report.file_path} FOUND SYNCED {processing_report.output_file_path}\n")
+        else:
+            output.write(f"{processing_report.file_path} FOUND {processing_report.output_file_path}\n")
+
+
+if __name__ == "__main__":
+    from sys import argv, stdout
+
+    main(argv[1:], stdout)

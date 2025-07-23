@@ -1,0 +1,237 @@
+#!/bin/env python3
+
+from re import compile as compile_regexp, Pattern
+from subprocess import run as run_subprocess
+from json import loads as load_json_from_string
+from os.path import commonpath as get_common_path
+from argparse import ArgumentParser, REMAINDER
+from dataclasses import dataclass
+from pathlib import Path
+from enum import Enum, auto as enum_auto_property
+from typing import Optional, Iterable, Self
+
+
+ACTION_REGEXP = compile_regexp(r"^(?P<tag_pattern>(?:(?:\\/)|[^/])+)(?:/r:(?P<replacement_pattern>(?:(?:\\/)|[^/])+)/(?P<replacer>(?:(?:\\/)|[^/])+))?(?:/m:(?P<on_missing_tag_name>(?:(?:\\/)|[^/])+)/(?P<on_missing_tag_value>(?:(?:\\/)|[^/])+))?/$")
+
+
+@dataclass
+class Action:
+    tag_pattern: Pattern
+    replacement: Optional[tuple[Pattern, str]] = None
+    on_missing: Optional[tuple[str, str]] = None
+
+    @classmethod
+    def from_string(cls, string: str) -> Self:
+        action_format_match = ACTION_REGEXP.fullmatch(string)
+
+        if action_format_match is None:
+            raise ValueError("Wrong format of action string")
+        
+        tag_pattern = compile_regexp(action_format_match.group("tag_pattern"))
+
+        replacement: Optional[tuple[Pattern, str]] = None
+        if (replacer := action_format_match.group("replacer")) is not None:
+            replacer = replacer.replace(r"\/", "/")
+            replacement = (compile_regexp(action_format_match.group("replacement_pattern").replace(r"\/", "/")), replacer)
+
+        on_missing: Optional[tuple[str, str]] = None
+        if (on_missing_tag_name := action_format_match.group("on_missing_tag_name")) is not None:
+            on_missing_tag_name = on_missing_tag_name.replace(r"\/", "/")
+            on_missing = (on_missing_tag_name, action_format_match.group("on_missing_tag_value").replace(r"\/", "/"))
+
+        return cls(tag_pattern=tag_pattern, replacement=replacement, on_missing=on_missing)
+
+
+    def is_its_tag(self, tag_name: str) -> bool:
+        return self.tag_pattern.fullmatch(tag_name) is not None
+
+    def execute(self, original_string: str) -> str:
+        if self.replacement is None:
+            return original_string
+        
+        return self.replacement[0].sub(self.replacement[1], original_string)
+    
+    def process_tags(self, tags: dict[str, str]) -> dict[str, str]:
+        result_tags: dict[str, str] = {tag_name: self.execute(tag_value) if self.is_its_tag(tag_name) else tag_value for tag_name, tag_value in tags.items()}
+        was_used: bool = any(map(self.is_its_tag, tags.keys()))
+
+        if self.on_missing is not None and not was_used:
+            result_tags[self.on_missing[0]] = self.on_missing[1]
+        
+        return result_tags
+
+
+REMOVE_FILENAME_SUFFIX_FROM_TITLE_ACTION: Action = Action(compile_regexp(r"(?i)title"), replacement=(compile_regexp(r"^(.+)\.(?:wav|flac|mp3)$"), r"\1"))
+REPLACE_COMMAS_WITH_SEMICOLONS_ACTION: Action = Action(compile_regexp(r"(?i)artist"), replacement=(compile_regexp(r"([^,]),\s([^,])"), r"\1; \2"))
+INSERT_VARIOUS_ARTISTS_ON_MISSING_ALBUM_ARTIST_ACTION: Action = Action(compile_regexp(r"(?i)album[_\s]?artist"), on_missing=("album_artist", "Various Artists"))
+REMOVE_LEADING_NUMBER_FROM_TITLE_ACTION: Action = Action(compile_regexp(r"(?i)title"), replacement=(compile_regexp(r"^[1-9]\d*\.?\s*(.+)$"), r"\1"))
+
+
+def get_tags(file_path: Path, ffprobe_path: Path | str = Path("ffprobe")) -> dict[str, str]:
+    ffprobe_run = run_subprocess(
+        executable=ffprobe_path,
+        args=["ffprobe", "-loglevel", "quiet", "-show_format", "-of", "json", "-i", file_path],
+        capture_output=True,
+        text=True
+    )
+
+    return load_json_from_string(ffprobe_run.stdout)["format"]["tags"]
+
+
+def process_tags(tags: dict[str, str], tags_actions: list[Action]) -> dict[str, str]:
+    result_tags: dict[str, str] = tags.copy()
+    
+    for action in tags_actions:
+        result_tags = action.process_tags(result_tags)
+
+    return result_tags
+
+
+@dataclass
+class ProcessingReport:
+    class ProcessingStatus(Enum):
+        SUCCESS = enum_auto_property()
+        SKIPPED = enum_auto_property()
+        ERROR = enum_auto_property()
+
+    input_path: Path
+    output_path: Path
+    ffmpeg_arguments: list[str | Path]
+    status: ProcessingStatus
+    error: Optional[Exception] = None
+    old_tags: Optional[dict[str, str]] = None
+    new_tags: Optional[dict[str, str]] = None
+    
+    @property
+    def has_changes(self) -> bool:
+        return self.old_tags != self.new_tags if self.old_tags and self.new_tags else False
+
+
+def process_file(
+    file_path: Path,
+    tags_actions: list[Action],
+    output_file_path: Path,
+    create_parent_directories: bool = False,
+    extra_ffmpeg_arguments: list[str | Path] = [],
+    ffmpeg_path: Path | str = Path("ffmpeg"),
+    ffprobe_path: Path | str = Path("ffprobe")
+) -> ProcessingReport:
+    try:
+        file_tags = get_tags(file_path, ffprobe_path)
+    except Exception as error:
+        return ProcessingReport(file_path, output_file_path, [], status=ProcessingReport.ProcessingStatus.ERROR, error=error)
+
+    new_tags_state = process_tags(file_tags, tags_actions)
+
+    if create_parent_directories:
+        output_file_path.parent.mkdir(exist_ok=True, parents=True)
+
+    is_skip: bool = True
+
+    ffmpeg_arguments: list[str | Path] = ["ffmpeg", "-i", file_path]
+
+    if new_tags_state != file_tags:
+        is_skip = False
+        ffmpeg_arguments.extend(("-map_metadata", "-1"))
+        for tag_name, tag_value in new_tags_state.items():
+            ffmpeg_arguments.extend(("-metadata", f"{tag_name}={tag_value}"))
+
+    ffmpeg_arguments.extend(extra_ffmpeg_arguments)
+
+    ffmpeg_arguments.append(output_file_path)
+
+    processing_report = ProcessingReport(file_path, output_file_path, ffmpeg_arguments, status=ProcessingReport.ProcessingStatus.ERROR, old_tags=file_tags, new_tags=new_tags_state)
+    try:
+        ffmpeg_run = run_subprocess(
+            executable=ffmpeg_path,
+            args=ffmpeg_arguments,
+            capture_output=True
+        )
+    except Exception as error:
+        processing_report.status = ProcessingReport.ProcessingStatus.ERROR
+        processing_report.error = error
+    else:
+        processing_report.status = ProcessingReport.ProcessingStatus.SKIPPED if is_skip else ProcessingReport.ProcessingStatus.SUCCESS
+
+    return processing_report
+
+
+def generate_output_file_path(
+    file_path: Path,
+    output_directory: Path,
+    new_suffix: Optional[str] = None,
+    common_path: Optional[Path] = None
+) -> Path:
+    output_file_path: Path = output_directory / (file_path.relative_to(common_path) if common_path is not None else file_path.name)
+    if new_suffix is not None:
+        output_file_path = output_file_path.with_suffix(new_suffix)
+
+    return output_file_path
+
+
+def process_files(
+    target_files: Iterable[Path],
+    tags_actions: list[Action],
+    output_directory: Path,
+    new_suffix: Optional[str] = None,
+    cut_common_path: bool = False,
+    create_parent_directories: bool = False,
+    extra_ffmpeg_arguments: list[str | Path] = [],
+    ffmpeg_path: Path | str = Path("ffmpeg"),
+    ffprobe_path: Path | str = Path("ffprobe")
+) -> Iterable[ProcessingReport]:
+    common_path: Optional[Path] = None
+    if cut_common_path:
+        try:
+            common_path = Path(get_common_path(target_files))
+        except ValueError:
+            common_path = None
+    
+    for file_path in target_files:
+        output_file_path = generate_output_file_path(file_path, output_directory, new_suffix, common_path)
+        yield process_file(file_path, tags_actions, output_file_path, create_parent_directories, extra_ffmpeg_arguments, ffmpeg_path, ffprobe_path)
+
+
+def create_argument_parser() -> ArgumentParser:
+    arguments_parser = ArgumentParser("tags-sed", description="Script for editing tags of music files via ffmpeg and provided actions")
+    arguments_parser.add_argument("target_files", nargs='+', type=Path, help="Files to process")
+
+    actions_arguments_group = arguments_parser.add_argument_group("actions")
+    actions_arguments_group.add_argument("--tags-actions", "--actions", nargs='*', default=[], type=Action.from_string, help="Actions for tags processing. Format: <tag_regex>[/r:<replacement_regex>/<replacer_template>][/m:<on_missing_tag_name>/<on_missing_tag_value>]/")
+    actions_arguments_group.add_argument("--remove-filename-suffix-from-title", const=REMOVE_FILENAME_SUFFIX_FROM_TITLE_ACTION, action="append_const", dest="tags_actions")
+    actions_arguments_group.add_argument("--replace-commas-with-semicolons", const=REPLACE_COMMAS_WITH_SEMICOLONS_ACTION, action="append_const", dest="tags_actions")
+    actions_arguments_group.add_argument("--insert-various-artists-on-missing-album-artist", const=INSERT_VARIOUS_ARTISTS_ON_MISSING_ALBUM_ARTIST_ACTION, action="append_const", dest="tags_actions")
+    actions_arguments_group.add_argument("--remove-leading-number-from-title", const=REMOVE_LEADING_NUMBER_FROM_TITLE_ACTION, action="append_const", dest="tags_actions")
+    
+    output_arguments_group = arguments_parser.add_argument_group("output")
+    output_arguments_group.add_argument("--new-suffix", type=str, required=False, help="New file suffix (point is required)")
+    output_arguments_group.add_argument("--output-directory", "--output", "-o", type=Path, default=Path.cwd(), help="Path to output directory")
+    output_arguments_group.add_argument("--cut-common-path", action="store_true", default=False, help="Cut common prefix from input files paths for output files")
+    output_arguments_group.add_argument("--create-parent-directories", "-p", action="store_true", default=False, help="Create parent directories for output files")
+
+    ffmpeg_arguments_group = arguments_parser.add_argument_group("ffmpeg and ffprobe")
+    ffmpeg_arguments_group.add_argument("--ffmpeg-path", "--ffmpeg", type=Path, default=Path("ffmpeg"), help="Path to ffmpeg executable")
+    ffmpeg_arguments_group.add_argument("--ffprobe-path", "--ffprobe", type=Path, default=Path("ffprobe"), help="Path to ffprobe executable")
+    ffmpeg_arguments_group.add_argument("--extra-ffmpeg-arguments", nargs=REMAINDER, default=[], type=str, help="Extra arguments passed to ffmpeg", required=False)
+
+    return arguments_parser
+
+
+def main(arguments, output):
+    arguments_parser = create_argument_parser()
+
+    parsed_arguments = arguments_parser.parse_args(arguments)
+
+    for report in process_files(**vars(parsed_arguments)):
+        if report.status == ProcessingReport.ProcessingStatus.ERROR:
+            output.write(f"ERROR: at file {report.input_path} \"{report.error}\"\n")
+        elif report.status == ProcessingReport.ProcessingStatus.SKIPPED:
+            output.write(f"SKIPPED: file {report.input_path} passed to {report.output_path}\n")
+        else:
+            output.write(f"SUCCESS: file {report.input_path} saved to {report.output_path}\n")
+
+
+if __name__ == "__main__":
+    from sys import argv, stdout
+
+    main(argv[1:], stdout)
