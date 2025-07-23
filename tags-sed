@@ -112,7 +112,7 @@ def process_file(
     tags_actions: list[Action],
     output_file_path: Path,
     create_parent_directories: bool = False,
-    extra_ffmpeg_arguments: list[str | Path] = [],
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None,
     ffmpeg_path: Path | str = Path("ffmpeg"),
     ffprobe_path: Path | str = Path("ffprobe")
 ) -> ProcessingReport:
@@ -136,7 +136,8 @@ def process_file(
         for tag_name, tag_value in new_tags_state.items():
             ffmpeg_arguments.extend(("-metadata", f"{tag_name}={tag_value}"))
 
-    ffmpeg_arguments.extend(extra_ffmpeg_arguments)
+    if extra_ffmpeg_arguments is not None:
+        ffmpeg_arguments.extend(extra_ffmpeg_arguments)
 
     ffmpeg_arguments.append(output_file_path)
 
@@ -176,7 +177,7 @@ def process_files(
     new_suffix: Optional[str] = None,
     cut_common_path: bool = False,
     create_parent_directories: bool = False,
-    extra_ffmpeg_arguments: list[str | Path] = [],
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None,
     ffmpeg_path: Path | str = Path("ffmpeg"),
     ffprobe_path: Path | str = Path("ffprobe")
 ) -> Iterable[ProcessingReport]:
