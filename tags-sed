@@ -6,16 +6,50 @@ from json import loads as load_json_from_string
 from os.path import commonpath as get_common_path
 from argparse import ArgumentParser, REMAINDER
 from dataclasses import dataclass
+from abc import ABC as AbstractBaseClass, abstractmethod as abstract_method
 from pathlib import Path
 from enum import Enum, auto as enum_auto_property
-from typing import Optional, Iterable, Self
+from typing import Optional, Iterable, Self, ClassVar
 
 
 ACTION_REGEXP = compile_regexp(r"^(?P<tag_pattern>(?:(?:\\/)|[^/])+)(?:/r:(?P<replacement_pattern>(?:(?:\\/)|[^/])+)/(?P<replacer>(?:(?:\\/)|[^/])+))?(?:/m:(?P<on_missing_tag_name>(?:(?:\\/)|[^/])+)/(?P<on_missing_tag_value>(?:(?:\\/)|[^/])+))?/$")
 
 
+class Action(AbstractBaseClass):
+    @abstract_method
+    def process_tags(self, tags: dict[str, str]) -> dict[str, str]:
+        ...
+
+
 @dataclass
-class Action:
+class MoveCoverFromTitleAction(Action):
+    TITLE_PARSING_REGEXP: ClassVar[Pattern] = compile_regexp(r"^(?P<title>.*?)\s*\[(?P<original_artist>.+)\s+cover\]$")
+
+    title_tag_name_regexp: Pattern = compile_regexp(r"(?i)title")
+    original_artist_tag: str = "original_artist"
+
+    def process_tags(self, tags: dict[str, str]) -> dict[str, str]:
+        title_tag_names: str = [tag_name for tag_name in tags.keys() if self.title_tag_name_regexp.fullmatch(tag_name) is not None]
+        if title_tag_names.__len__() == 0:
+            return tags
+
+        title_tag_name: str = title_tag_names[0]
+
+        if (title := tags.get(title_tag_name)) is None:
+            return tags
+        
+        if (title_parsing_match := self.TITLE_PARSING_REGEXP.fullmatch(title)) is None:
+            return tags
+        
+        result_tags: dict[str, str] = tags.copy()
+        result_tags[title_tag_name] = title_parsing_match.group("title")
+        result_tags[self.original_artist_tag] = title_parsing_match.group(self.original_artist_tag)
+
+        return result_tags
+
+
+@dataclass
+class RegexTagAction(Action):
     tag_pattern: Pattern
     replacement: Optional[tuple[Pattern, str]] = None
     on_missing: Optional[tuple[str, str]] = None
@@ -61,10 +95,11 @@ class Action:
         return result_tags
 
 
-REMOVE_FILENAME_SUFFIX_FROM_TITLE_ACTION: Action = Action(compile_regexp(r"(?i)title"), replacement=(compile_regexp(r"^(.+)\.(?:wav|flac|mp3)$"), r"\1"))
-REPLACE_COMMAS_WITH_SEMICOLONS_ACTION: Action = Action(compile_regexp(r"(?i)artist"), replacement=(compile_regexp(r"([^,]),\s([^,])"), r"\1; \2"))
-INSERT_VARIOUS_ARTISTS_ON_MISSING_ALBUM_ARTIST_ACTION: Action = Action(compile_regexp(r"(?i)album[_\s]?artist"), on_missing=("album_artist", "Various Artists"))
-REMOVE_LEADING_NUMBER_FROM_TITLE_ACTION: Action = Action(compile_regexp(r"(?i)title"), replacement=(compile_regexp(r"^[1-9]\d*\.?\s*(.+)$"), r"\1"))
+REMOVE_FILENAME_SUFFIX_FROM_TITLE_ACTION: Action = RegexTagAction(compile_regexp(r"(?i)title"), replacement=(compile_regexp(r"^(.+)\.(?:wav|flac|mp3)$"), r"\1"))
+REPLACE_COMMAS_WITH_SEMICOLONS_ACTION: Action = RegexTagAction(compile_regexp(r"(?i)artist"), replacement=(compile_regexp(r"([^,]),\s([^,])"), r"\1; \2"))
+INSERT_VARIOUS_ARTISTS_ON_MISSING_ALBUM_ARTIST_ACTION: RegexTagAction = RegexTagAction(compile_regexp(r"(?i)album[_\s]?artist"), on_missing=("album_artist", "Various Artists"))
+REMOVE_LEADING_NUMBER_FROM_TITLE_ACTION: Action = RegexTagAction(compile_regexp(r"(?i)title"), replacement=(compile_regexp(r"^[1-9]\d*\.?\s*(.+)$"), r"\1"))
+MOVE_COVER_FROM_TITLE_ACTION: Action = MoveCoverFromTitleAction()
 
 
 def get_tags(file_path: Path, ffprobe_path: Path | str = Path("ffprobe")) -> dict[str, str]:
@@ -198,11 +233,12 @@ def create_argument_parser() -> ArgumentParser:
     arguments_parser.add_argument("target_files", nargs='+', type=Path, help="Files to process")
 
     actions_arguments_group = arguments_parser.add_argument_group("actions")
-    actions_arguments_group.add_argument("--tags-actions", "--actions", nargs='*', default=[], type=Action.from_string, help="Actions for tags processing. Format: <tag_regex>[/r:<replacement_regex>/<replacer_template>][/m:<on_missing_tag_name>/<on_missing_tag_value>]/")
+    actions_arguments_group.add_argument("--tags-actions", "--actions", nargs='*', default=[], type=RegexTagAction.from_string, help="Actions for tags processing. Format: <tag_regex>[/r:<replacement_regex>/<replacer_template>][/m:<on_missing_tag_name>/<on_missing_tag_value>]/")
     actions_arguments_group.add_argument("--remove-filename-suffix-from-title", const=REMOVE_FILENAME_SUFFIX_FROM_TITLE_ACTION, action="append_const", dest="tags_actions")
     actions_arguments_group.add_argument("--replace-commas-with-semicolons", const=REPLACE_COMMAS_WITH_SEMICOLONS_ACTION, action="append_const", dest="tags_actions")
     actions_arguments_group.add_argument("--insert-various-artists-on-missing-album-artist", const=INSERT_VARIOUS_ARTISTS_ON_MISSING_ALBUM_ARTIST_ACTION, action="append_const", dest="tags_actions")
     actions_arguments_group.add_argument("--remove-leading-number-from-title", const=REMOVE_LEADING_NUMBER_FROM_TITLE_ACTION, action="append_const", dest="tags_actions")
+    actions_arguments_group.add_argument("--move-cover-from-title", const=MOVE_COVER_FROM_TITLE_ACTION, action="append_const", dest="tags_actions")
     
     output_arguments_group = arguments_parser.add_argument_group("output")
     output_arguments_group.add_argument("--new-suffix", type=str, required=False, help="New file suffix (point is required)")
