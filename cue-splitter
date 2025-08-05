@@ -1,0 +1,357 @@
+#!/bin/env python3
+
+from re import compile as compile_regexp
+from subprocess import run as run_subprocess
+from argparse import ArgumentParser, REMAINDER
+from typing import Optional, Self, Iterable, ClassVar, Any
+from abc import ABC as AbstractBaseClass, abstractmethod as abstract_method
+from dataclasses import dataclass, field as dataclass_field
+from itertools import zip_longest, starmap as star_map
+from pathlib import Path
+
+
+COMMAND_REGEXP = compile_regexp(r"^(?P<indent>\s*)(?P<command_and_arguments>(?P<command>[^\s]+)[^\n]+)$")
+TITLE_COMMAND_REGEX = compile_regexp(r"\s*TITLE\s*\"(?P<title>(?:[^\"]|(?:\\\"))+)\"")
+PERFORMER_COMMAND_REGEX = compile_regexp(r"\s*PERFORMER\s*\"(?P<performer>(?:[^\"]|(?:\\\"))+)\"")
+FILE_COMMAND_REGEX = compile_regexp(r"\s*FILE\s*\"(?P<path>(?:[^\"]|(?:\\\"))+)\"\s*(?P<format>\w+)")
+TRACK_COMMAND_REGEX = compile_regexp(r"\s*TRACK\s+(?P<number>\d+)\s+AUDIO")
+INDEX_COMMAND_REGEX = compile_regexp(r"\s*INDEX\s+(?P<number>\d+)\s+(?P<minute>\d{2,}):(?P<second>\d{2}):(?P<frame>\d{2})")
+ISRC_COMMAND_REGEX = compile_regexp(r"\s*ISRC\s+(?P<isrc>[\d\w]+)")
+REM_KEY_VALUE_COMMAND_REGEX = compile_regexp(r"\s*REM\s+(?P<key>\w+)\s+(?P<quote>\")?(?P<value>(?(quote)[^\"]*|[^\s\n]+))(?(quote)\")")
+
+
+class HierarchyParsable(AbstractBaseClass):
+    class UnsupportedCommandError (Exception):
+        ...
+
+    @abstract_method
+    def get_upper(self) -> Optional[Self]:
+        ...
+    
+    @abstract_method
+    def parse_command(self, command: str) -> Self:
+        ...
+
+    @classmethod
+    def parse(cls, initial: Self, commands: Iterable[str]) -> Self:
+        current: Self = initial
+
+        for command in commands:
+            while current is not None:
+                try:
+                    current = current.parse_command(command)
+                except cls.UnsupportedCommandError:
+                    current = current.get_upper()
+                else:
+                    break
+            else:
+                raise ValueError(f"\"{command}\" is not parseable")
+        
+        return initial
+
+    @abstract_method
+    def get_meta(self, key: str) -> Optional[str]:
+        ...
+
+    def get_meta_recursively(self, key: str) -> Optional[str]:
+        if (value := self.get_meta(key)) is not None:
+            return value
+        elif (hierarchy_upper_object := self.get_upper()) is not None:
+            return hierarchy_upper_object.get_meta_recursively(key)
+        else:
+            return None
+        
+
+@dataclass(order=True)
+class CuePosition:
+    FRAMES_PER_SECOND: ClassVar[int] = 75
+
+    minute: int
+    second: int
+    frame: int
+
+    def to_time_specifier(self, precision: int = 4) -> str:
+        total_seconds_amount = self.minute * 60 + self.second
+        return f"{total_seconds_amount}.{int((10 ** precision) * round(self.frame / self.FRAMES_PER_SECOND, precision))}"
+
+
+@dataclass
+class CueTrack(HierarchyParsable):
+    file: Any = dataclass_field() #: CueFile
+    number: int
+    title: Optional[str] = None
+    performer: Optional[str] = None
+    indexes: dict[int, CuePosition] = dataclass_field(default_factory=dict)
+    isrc: Optional[str] = None
+    rems_meta: dict[str, str] = dataclass_field(default_factory=dict)
+
+    def get_position(self, index: int) -> CuePosition:
+        return self.indexes[index]
+    
+    def get_lowest_position(self) -> CuePosition:
+        return min(self.indexes.values())
+
+    def get_start_position(self) -> CuePosition:
+        return self.get_position(index=1)
+
+    def get_performer(self) -> Optional[str]:
+        if self.performer is not None:
+            return self.performer
+        
+        return self.file.cd.performer
+
+    def get_upper(self) -> HierarchyParsable:
+        return self.file
+
+    def parse_command(self, command: str) -> Self:
+        if (title_command_match := TITLE_COMMAND_REGEX.fullmatch(command)) is not None:
+            self.title = title_command_match.group("title")
+        elif (performer_command_match := PERFORMER_COMMAND_REGEX.fullmatch(command)) is not None:
+            self.performer = performer_command_match.group("performer")
+        elif (isrc_command_match := ISRC_COMMAND_REGEX.fullmatch(command)) is not None:
+            self.isrc = isrc_command_match.group("isrc")
+        elif (index_command_match := INDEX_COMMAND_REGEX.fullmatch(command)) is not None:
+            index_position = CuePosition(**{key: int(index_command_match.group(key)) for key in ["minute", "second", "frame"]})
+            self.indexes[int(index_command_match.group("number"))] = index_position
+        elif (rem_key_value_match := REM_KEY_VALUE_COMMAND_REGEX.fullmatch(command)) is not None:
+            self.rems_meta[rem_key_value_match.group("key")] = rem_key_value_match.group("value")
+            return self
+        else:
+            raise HierarchyParsable.UnsupportedCommandError()
+
+        return self
+
+    def get_meta(self, key: str) -> Optional[str]:
+        if key == "title":
+            return self.title
+        elif key == "performer":
+            return self.performer
+        elif key == "number":
+            return str(self.number)
+        elif key == "isrc":
+            return self.isrc
+        else:
+            return self.rems_meta.get(key)
+    
+    def get_tag(self, tag: str) -> Optional[str]:
+        if tag.lower() in {"album", "albumtitle", "album_title"}:
+            return self.file.get_meta_recursively("title")
+        else:
+            return self.get_meta_recursively(tag)
+
+
+@dataclass
+class CueFile(HierarchyParsable):
+    sheet: Any = dataclass_field() #: CueSheet
+    path: Path
+    format: str 
+    tracks: list[CueTrack] = dataclass_field(default_factory=list)
+    rems_meta: dict[str, str] = dataclass_field(default_factory=dict)
+
+    def get_upper(self) -> HierarchyParsable:
+        return self.sheet
+
+    def parse_command(self, command: str) -> Self:
+        if (track_command_match := TRACK_COMMAND_REGEX.fullmatch(command)) is not None:
+            self.tracks.append(CueTrack(
+                file=self,
+                number=int(track_command_match.group("number"))
+            ))
+            return self.tracks[-1]
+        elif (rem_key_value_match := REM_KEY_VALUE_COMMAND_REGEX.fullmatch(command)) is not None:
+            self.rems_meta[rem_key_value_match.group("key")] = rem_key_value_match.group("value")
+            return self
+        else:
+            raise HierarchyParsable.UnsupportedCommandError()
+
+    def get_tracks(self) -> Iterable[CueTrack]:
+        return self.tracks
+
+    def get_meta(self, key: str) -> Optional[str]:
+        return self.rems_meta.get(key)
+
+
+@dataclass(order=True)
+class CueSheet(HierarchyParsable):
+    title: Optional[str] = None
+    performer: Optional[str] = None
+    files: list[CueFile] = dataclass_field(default_factory=list)
+    rems_meta: dict[str, str] = dataclass_field(default_factory=dict)
+
+    def get_upper(self) -> Optional[Self]:
+        return None
+    
+    def parse_command(self, command: str) -> Self:
+        if (title_command_match := TITLE_COMMAND_REGEX.fullmatch(command)) is not None:
+            self.title = title_command_match.group("title")
+            return self
+        elif (performer_command_match := PERFORMER_COMMAND_REGEX.fullmatch(command)) is not None:
+            self.performer = performer_command_match.group("performer")
+            return self
+        elif (file_command_match := FILE_COMMAND_REGEX.fullmatch(command)) is not None:
+            self.files.append(CueFile(
+                sheet=self,
+                path=Path(file_command_match.group("path")),
+                format=file_command_match.group("format")
+            ))
+            return self.files[-1]
+        elif (rem_key_value_match := REM_KEY_VALUE_COMMAND_REGEX.fullmatch(command)) is not None:
+            self.rems_meta[rem_key_value_match.group("key")] = rem_key_value_match.group("value")
+            return self
+        else:
+            raise HierarchyParsable.UnsupportedCommandError()
+
+    @classmethod
+    def parse(cls, commands: Iterable[str]) -> Self:
+        return super().parse(cls(), commands)
+
+    def get_tracks(self) -> Iterable[CueTrack]:
+        for file in self.files:
+            yield from file.get_tracks()
+    
+    def get_meta(self, key: str) -> Optional[str]:
+        if key == "title":
+            return self.title
+        elif key == "performer":
+            return self.performer
+        else:
+            return self.rems_meta.get(key)
+
+
+TAGS: list[tuple[str, str]] = [
+    ("performer", "artist"),
+    ("album", "album"),
+    ("number", "number"),
+    ("title", "title"),
+    ("isrc", "isrc"),
+    ("GENRE", "genres"),
+    ("DATE", "date"),
+    ("COMMENT", "comment")
+]
+INETEGER_TAGS: set[str] = {"number"}
+
+
+def get_cue_sheet_ffmpeg_extraction_runs(
+    cue_sheet: CueSheet,
+    parent_directory: str | Path = ".",
+    output_file_name_formatting: str = "./{artist}/{album}/{number:02}. {title}.{file_suffix}",
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None
+) -> Iterable[tuple[CueTrack, Path, list[str | Path]]]:
+    # HURT: that can be made lazy, but there still is
+    #   no sliding_window with "gap" feature
+    tracks: list[CueTrack] = list(cue_sheet.get_tracks())
+    for track, next_track in zip_longest(tracks[0:], tracks[1:]):
+        ffmpeg_arguments: list[str | Path] = ["ffmpeg"]
+
+        track_file_path_str = str(parent_directory)
+        if not track_file_path_str.endswith("/"):
+            track_file_path_str += "/"
+        track_file_path_str += str(track.file.path)
+        ffmpeg_arguments.extend(("-i", track_file_path_str))
+
+        ffmpeg_arguments.extend(("-ss", track.get_start_position().to_time_specifier()))
+
+        if next_track is not None:
+            ffmpeg_arguments.extend(("-to", next_track.get_lowest_position().to_time_specifier()))
+
+        formattings: dict[str, any] = {}
+        for tag_key, tag in TAGS:
+            if (tag_value := track.get_tag(tag_key)) is not None:
+                ffmpeg_arguments.extend(("-metadata", f"{tag}={tag_value}"))
+                formattings[tag] = tag_value if tag_key not in INETEGER_TAGS else int(tag_value)
+
+        formattings["file_suffix"] = track.file.path.suffix
+
+        output_file_path: Path = Path(output_file_name_formatting.format_map(formattings))
+        ffmpeg_arguments.append(output_file_path)
+
+        if extra_ffmpeg_arguments is not None:
+            ffmpeg_arguments.extend(extra_ffmpeg_arguments)
+
+        yield (track, output_file_path, ffmpeg_arguments)
+
+
+def run_cue_sheet_ffmpeg_extractions(
+    cue_sheet: CueSheet,
+    parent_directory: str | Path = ".",
+    output_file_name_formatting: str = "./{artist}/{album}/{number:02}. {title}.{file_suffix}",
+    create_output_files_parent_directories: bool = True,
+    ffmpeg_executable_path: Path = Path("ffmpeg"),
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None
+):
+    ffmpeg_runs_arguments: tuple[CueTrack, Path, list[str | Path]] = get_cue_sheet_ffmpeg_extraction_runs(
+        cue_sheet=cue_sheet,
+        parent_directory=parent_directory,
+        output_file_name_formatting=output_file_name_formatting,
+        extra_ffmpeg_arguments=extra_ffmpeg_arguments
+    )
+
+    for cue_track, output_file_path, ffmpeg_run_arguments in ffmpeg_runs_arguments:
+        if create_output_files_parent_directories:
+            output_file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        run_subprocess(executable=ffmpeg_executable_path, args=ffmpeg_run_arguments)
+
+
+def parse_cue_sheet_file( cue_sheet_file_path: Path, cue_sheet_file_encoding: str = "utf-8"):
+    with open(cue_sheet_file_path, mode="rt", encoding=cue_sheet_file_encoding) as cue_sheet_file:
+        return CueSheet.parse(map(str.rstrip, cue_sheet_file))
+
+
+def perform(
+    cue_sheet_file_path: Path,
+    cue_sheet_file_encoding: str = "utf-8",
+    parent_directory_replacement: Optional[str | Path] = None,
+    output_file_name_formatting: str = "./{artist}/{album}/{number:02}. {title}.{file_suffix}",
+    create_output_files_parent_directories: bool = True,
+    ffmpeg_executable_path: Path = Path("ffmpeg"),
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None
+):
+    cue_sheet = parse_cue_sheet_file(
+        cue_sheet_file_path=cue_sheet_file_path,
+        cue_sheet_file_encoding=cue_sheet_file_encoding
+    )
+
+    run_cue_sheet_ffmpeg_extractions(
+        cue_sheet=cue_sheet,
+        parent_directory=(parent_directory_replacement if parent_directory_replacement is not None else cue_sheet_file_path.parent),
+        output_file_name_formatting=output_file_name_formatting,
+        create_output_files_parent_directories=create_output_files_parent_directories,
+        ffmpeg_executable_path=ffmpeg_executable_path,
+        extra_ffmpeg_arguments=extra_ffmpeg_arguments
+    )
+
+
+def create_argument_parser() -> ArgumentParser:
+    arguments_parser = ArgumentParser(
+        prog="cue-splitter",
+        description="Script for extracting tracks by .cue file"
+    )
+
+    arguments_parser.add_argument("cue_sheet_file_path", type=Path, help="Path to .cue file")
+    arguments_parser.add_argument("--cue-sheet-file-encoding", "--cue-encoding", type=str, default="utf8", help="Encoding of .cue file")
+    arguments_parser.add_argument("--parent-directory-replacement", type=str, required=False, help="Replacement for parent directory")
+
+    arguments_parser.add_argument("--output-file-name-formatting", "-o", type=str, default="./{artist}/{album}/{number:02}. {title}{file_suffix}", help="Format of path for output files")
+    arguments_parser.add_argument("--create-output-files-parent-directories", "-p", action="store_true", default=False, help="Create parent directories for output files")
+
+    arguments_parser.add_argument("--ffmpeg-executable-path", "--ffmpeg", type=Path, default=Path("ffmpeg"), help="Path for ffmpeg executable")
+
+    arguments_parser.add_argument("--ffmpeg-codec-copy", const=["-c", "copy"], action="store_const", dest="extra_ffmpeg_arguments", help="Add \"-c copy\" arguments to ffmpeg run")
+    arguments_parser.add_argument("--extra-ffmpeg-arguments", nargs=REMAINDER, default=[], action="extend", type=str, help="Extra arguments passed to ffmpeg during lyrics integration", required=False)
+
+    return arguments_parser
+
+
+def main(arguments, output):
+    arguments_parser = create_argument_parser()
+
+    parsed_arguments = arguments_parser.parse_args(arguments)
+
+    perform(**vars(parsed_arguments))
+
+
+if __name__ == "__main__":
+    from sys import argv, stdout
+
+    main(argv[1:], stdout)
