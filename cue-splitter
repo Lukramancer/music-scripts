@@ -221,7 +221,7 @@ class CueSheet(HierarchyParsable):
 TAGS: list[tuple[str, str]] = [
     ("performer", "artist"),
     ("album", "album"),
-    ("number", "number"),
+    ("number", "tracknumber"),
     ("title", "title"),
     ("isrc", "isrc"),
     ("GENRE", "genres"),
@@ -332,7 +332,7 @@ def create_argument_parser() -> ArgumentParser:
     arguments_parser.add_argument("--cue-sheet-file-encoding", "--cue-encoding", type=str, default="utf8", help="Encoding of .cue file")
     arguments_parser.add_argument("--parent-directory-replacement", type=str, required=False, help="Replacement for parent directory")
 
-    arguments_parser.add_argument("--output-file-name-formatting", "-o", type=str, default="./{artist}/{album}/{number:02}. {title}{file_suffix}", help="Format of path for output files")
+    arguments_parser.add_argument("--output-file-name-formatting", "-o", type=str, default="./{artist}/{album}/{tracknumber:02}. {title}{file_suffix}", help="Format of path for output files")
     arguments_parser.add_argument("--create-output-files-parent-directories", "-p", action="store_true", default=False, help="Create parent directories for output files")
 
     arguments_parser.add_argument("--ffmpeg-executable-path", "--ffmpeg", type=Path, default=Path("ffmpeg"), help="Path for ffmpeg executable")
