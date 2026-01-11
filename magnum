@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+
+from re import Pattern, compile as compile_regex
+from subprocess import run as run_subprocess
+from typing import Callable, Optional, Iterable, ClassVar, Self
+from pathlib import Path
+from dataclasses import dataclass
+from json import dumps as serialize_json_to_str, loads as deserialize_json_from_str
+from argparse import ArgumentParser, Namespace, Action
+from abc import ABC as AbstractBaseClass, abstractmethod as abstract_method
+from shlex import split as split_shell_arguments
+
+
+class Track(AbstractBaseClass):
+    @abstract_method
+    def get_ffmpeg_extraction_arguments(self) -> list[str | Path]:
+        ...
+
+    @abstract_method
+    def get_initial_info(self) -> tuple[dict[str, str], float, Path]:
+        ...
+
+
+@dataclass
+class FileTrack(Track):
+    file_path: Path
+    ffprobe_path: Path
+
+    @classmethod
+    def from_path(cls, file_track_path: Path, ffprobe_path: Path):
+        return cls(file_track_path, ffprobe_path)
+
+    def get_ffmpeg_extraction_arguments(self) -> list[str | Path]:
+        return ["-i", self.file_path]
+
+    def get_initial_info(self) -> tuple[dict[str, str], float, Path]:
+        ffprobe_arguments: list[str | Path] = ["ffprobe", "-loglevel", "quiet", "-show_format", "-of", "json"]
+        ffprobe_arguments.extend(self.get_ffmpeg_extraction_arguments())
+
+        ffprobe_run = run_subprocess(
+            executable=self.ffprobe_path,
+            args=ffprobe_arguments,
+            capture_output=True,
+            text=True
+        )
+
+        file_info = deserialize_json_from_str(ffprobe_run.stdout)["format"]
+
+        return file_info["tags"], float(file_info["duration"]), Path(file_info["filename"])
+
+
+# NOTE: too niche feature to be in standard library
+# https://github.com/python/cpython/issues/87326#issuecomment-2380079188
+class ExtendConstAction(Action):
+    def __init__(self, option_strings, dest, const, default=None, required=False, help=None, metavar=None):
+        super(ExtendConstAction, self).__init__(option_strings=option_strings, dest=dest, nargs=0, const=const, default=default, required=required, help=help, metavar=metavar)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        items = getattr(namespace, self.dest, None)
+
+        if items is None:
+            items = []
+        elif type(items) is list:
+            items = items[:]
+        else:
+            import copy
+            items = copy.copy(items)
+
+        items.extend(self.const)
+
+        setattr(namespace, self.dest, items)
+
+
+TagsProcessor = Callable[[dict[str, str], Path, float], dict[str, str]]
+
+
+@dataclass
+class PathTagsProcessor:
+    file_path_format: Pattern
+
+    @classmethod
+    def from_argument(cls, option: str) -> Self:
+        print(option)
+        return cls(compile_regex(option))
+
+    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+        file_path_format_match = self.file_path_format.fullmatch(str(file_path))
+
+        return file_path_format_match.groupdict() if file_path_format_match is not None else dict[str, str]()
+
+
+@dataclass
+class EraserTagsProcessor:
+    eraseble_tag: str
+
+    @classmethod
+    def from_argument(cls, option: str) -> Self:
+        return cls(option)
+
+    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+        return {tag_name: tag_value for tag_name, tag_value in tags.items() if tag_name != self.eraseble_tag}
+
+
+@dataclass
+class WriterTagsProcessor:
+    writable_tag: str
+    writable_tag_value: str
+
+    @classmethod
+    def from_argument(cls, option: str) -> Self:
+        return cls(*option.split('=', maxsplit=1))
+
+    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+        return tags | {self.writable_tag: self.writable_tag_value}
+
+
+@dataclass
+class FillerTagsProcessor:
+    fillable_tag: str
+    fillable_tag_value: str
+
+    @classmethod
+    def from_argument(cls, option: str) -> Self:
+        return cls(*option.split('=', maxsplit=1))
+
+    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+        return ({self.fillable_tag: self.fillable_tag_value} | tags) if self.fillable_tag not in tags else tags
+
+
+@dataclass
+class OverriderTagsProcessor:
+    overriadable_tag: str
+    overriadable_tag_value: str
+
+    @classmethod
+    def from_argument(cls, option: str) -> Self:
+        return cls(*option.split('=', maxsplit=1))
+
+    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+        return (tags | {self.overriadable_tag: self.overriadable_tag_value}) if self.overriadable_tag in tags else tags
+
+
+@dataclass
+class ExternalTagsProcessor:
+    argument_pattern: ClassVar[Pattern] = compile_regex(r"^(?P<executable_path>(?:(?:\\:)|[^:])+)(?::(?P<arguments>.+))?$")
+
+    executable_path: Path
+    arguments: Optional[str]
+
+    @classmethod
+    def from_argument(cls, option: str) -> Self:
+        argument_pattern_match = cls.argument_pattern.fullmatch(option)
+
+        if argument_pattern_match is None:
+            raise ValueError("Option string for ExternalTagsProcessor must be the following format: \"<executable_path>[:arguments]\"")
+
+        return cls(Path(argument_pattern_match.group("executable_path").replace(r"\:", ":")), argument_pattern_match.group("arguments"))
+
+
+    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+        arguments = [self.executable_path.name]
+        if self.arguments is not None:
+            arguments.extend(split_shell_arguments(self.arguments))
+
+        external_tags_processor_run = run_subprocess(
+            executable=self.executable_path,
+            args=arguments,
+            text=True,
+            input=serialize_json_to_str({"filename": str(file_path), "duration": duration, "tags": tags}),
+            capture_output=True
+        )
+
+        return deserialize_json_from_str(external_tags_processor_run.stdout)
+
+
+def generate_ffmpeg_command(
+    track: Track,
+    metadata: dict[str, str],
+    output_file_path: Path | str,
+    ffmpeg_extra_arguments: Optional[Iterable[str | Path]] = None,
+):
+    ffmpeg_arguments: list[str | Path] = ["ffmpeg", "-hide_banner"]
+    ffmpeg_arguments.extend(track.get_ffmpeg_extraction_arguments())
+
+    ffmpeg_arguments.extend(("-map_metadata", "-1"))
+    for tag_name, tag_value in metadata.items():
+        ffmpeg_arguments.extend(("-metadata", f"{tag_name}={tag_value}"))
+
+    if ffmpeg_extra_arguments is not None:
+        ffmpeg_arguments.extend(ffmpeg_extra_arguments)
+
+    ffmpeg_arguments.append(output_file_path)
+
+    return ffmpeg_arguments
+
+
+def plan(
+    tracks: Iterable[Track],
+    tags_processors: list[TagsProcessor],
+    output_file_path_format: str,
+    included_tags: Optional[list[str]] = None,
+    excluded_tags: Optional[list[str]] = None,
+    ffmpeg_extra_arguments: Optional[list[str | Path]] = None
+) -> Iterable[tuple[Path, list[str | Path]]]:
+    for track in tracks:
+        track_tags, track_duration, track_path = track.get_initial_info()
+        for tags_processor in tags_processors:
+            track_tags = tags_processor(track_tags, track_path, track_duration)
+
+        output_file_path = Path(output_file_path_format.format_map(track_tags))
+
+        tags_filter: Callable[[str], bool] = lambda tag_name: True
+        if included_tags is not None and included_tags.__len__() > 0:
+            tags_filter = lambda tag_name: tag_name in included_tags
+        elif excluded_tags is not None and excluded_tags.__len__() > 0:
+            tags_filter = lambda tag_name: tag_name not in excluded_tags
+
+        track_tags_to_inject: dict[str, str] = {tag_name: tag_value for tag_name, tag_value in track_tags.items() if tags_filter(tag_name)}
+
+        yield output_file_path, generate_ffmpeg_command(
+            track=track,
+            metadata=track_tags_to_inject,
+            output_file_path=output_file_path,
+            ffmpeg_extra_arguments=ffmpeg_extra_arguments
+        )
+
+
+def process(
+    tracks: Iterable[Track],
+    tags_processors: list[TagsProcessor],
+    output_file_path_format: str,
+    create_parent_directories: bool = True,
+    included_tags: Optional[list[str]] = None,
+    excluded_tags: Optional[list[str]] = None,
+    ffmpeg_executable_path: Optional[Path] = None,
+    ffmpeg_extra_arguments: Optional[list[str | Path]] = None,
+    is_dry_run: bool = False
+):
+    plans = plan(
+        tracks=tracks, tags_processors=tags_processors,
+        output_file_path_format=output_file_path_format,
+        included_tags=included_tags, excluded_tags=excluded_tags,
+        ffmpeg_extra_arguments=ffmpeg_extra_arguments
+    )
+
+    for output_file_path, run_arguments in plans:
+        if is_dry_run:
+            print(*run_arguments)
+            continue
+
+        if create_parent_directories:
+            output_file_path.parent.mkdir(exist_ok=True, parents=True)
+
+        run_subprocess(
+            executable=ffmpeg_executable_path,
+            args=run_arguments,
+            capture_output=False,
+            # stdin=bytes()
+        )
+
+
+def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Optional[Path] = None) -> ArgumentParser:
+    argument_parser = ArgumentParser()
+
+    argument_parser.add_argument("file_tracks_paths", type=Path, nargs="*", help="Processable files paths")
+
+    output_argument_group = argument_parser.add_argument_group("Output")
+    output_argument_group.add_argument("-p", "--create-parent-directories", action="store_true", help="Create parent directories for each file")
+    # NOTE: uses python str, so it is possible and useful to align track number like "{track:0>2}"
+    output_argument_group.add_argument("-o", "--output", type=str, required=True, help="Format string for output files paths")
+    output_argument_group.add_argument("--dry-run", "--dry", dest="is_dry_run", action="store_true", help="Only print runnable ffmpeg commands")
+
+    tags_processors_argument_group = argument_parser.add_argument_group("Tags processing")
+    tags_processors_argument_group.add_argument("--infer-from-path",
+        type=PathTagsProcessor.from_argument, action="append", dest="tags_processors",
+        metavar="<regex>",
+        help="Regexp with named groups, matches to file path and every pair of group name and captured value will be passed to tags set")
+    tags_processors_argument_group.add_argument("--erase",
+        type=EraserTagsProcessor.from_argument, action="append", dest="tags_processors",
+        metavar="<tag_name>",
+        help="String of format \"<tag_name>\" - erases <tag_name> from tags set")
+    tags_processors_argument_group.add_argument("--write",
+        type=WriterTagsProcessor.from_argument, action="append", dest="tags_processors",
+        metavar="<tag_name>=<tag_value>",
+        help="String of format \"<tag_name>=<tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file")
+    tags_processors_argument_group.add_argument("--override",
+        type=OverriderTagsProcessor.from_argument, action="append", dest="tags_processors",
+        metavar="<tag_name>=<tag_value>",
+        help="String of format \"<tag_name>=<tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was in original tags set")
+    tags_processors_argument_group.add_argument("--fill",
+        type=FillerTagsProcessor.from_argument, action="append", dest="tags_processors",
+        help="String of format \"<tag_name>=<tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was not in original tags set")
+    tags_processors_argument_group.add_argument("--external", "--external-processor",
+        type=ExternalTagsProcessor.from_argument, action="append", dest="tags_processors",
+        metavar="<executable_path>[:arguments]",
+        help="String of format \"<executable_path>[:arguments]\" which will be executed with provided in stdin json of current state of tags")
+
+    final_tags_argument_group = output_argument_group.add_mutually_exclusive_group()
+    final_tags_argument_group.add_argument("--included-tags", type=str, nargs="*", help="List of tags should be written in audio files")
+    final_tags_argument_group.add_argument("--excluded-tags", type=str, nargs="*", help="List of tags should NOT be written in audio files")
+
+    ffmpeg_argument_group = argument_parser.add_argument_group("FFmpeg")
+    ffmpeg_argument_group.add_argument("--ffmpeg-executable-path", "--ffmpeg", type=Path, help="Path to ffmpeg executable", default=ffmpeg_path)
+    ffmpeg_argument_group.add_argument("--ffprobe-executable-path", "--ffprobe", type=Path, help="Path to ffprobe executable", default=ffprobe_path)
+    ffmpeg_argument_group.add_argument("--ffmpeg-extra-arguments", type=split_shell_arguments, help="Additional options that will be passed to ffmpeg")
+    ffmpeg_argument_group.add_argument("-y", action="append_const", const="-y", dest="ffmpeg_extra_arguments", help="Adds \"-y\" option to ffmpeg run")
+    ffmpeg_argument_group.add_argument("--ffmpeg-codec-copy", action=ExtendConstAction, const=["-codec", "copy"], dest="ffmpeg_extra_arguments", help="Adds \"-codec copy\" options to ffmpeg run")
+
+    return argument_parser
+
+
+def main():
+    from sys import stderr
+    from shutil import which
+
+    ffmpeg_path_str, ffprobe_path_str = which("ffmpeg"), which("ffprobe")
+    ffmpeg_path: Optional[Path] = Path(ffmpeg_path_str) if ffmpeg_path_str is not None else None
+    ffprobe_path: Optional[Path] = Path(ffprobe_path_str) if ffprobe_path_str is not None else None
+
+    argument_parser = create_argument_parser(ffmpeg_path, ffprobe_path)
+    parsed_arguments = argument_parser.parse_args(namespace=Namespace(tags_processors=list()))
+    print(parsed_arguments, end="\n\n")
+
+    ffprobe_path: Optional[Path] = parsed_arguments.ffprobe_executable_path
+    tracks: list[Track] = list[Track]()
+
+    file_tracks_paths: Optional[list[Path]] = parsed_arguments.file_tracks_paths
+    if ffprobe_path is not None and file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
+        tracks.extend([FileTrack.from_path(file_track_path, ffprobe_path) for file_track_path in file_tracks_paths])
+    elif file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
+        stderr.write("Can not find ffprobe executable for processing provided tracks, specify path to ffprobe executable via --ffprobe option\n")
+        exit(1)
+
+    process(
+        tracks=tracks,
+        tags_processors=parsed_arguments.tags_processors,
+        output_file_path_format=parsed_arguments.output,
+        create_parent_directories=parsed_arguments.create_parent_directories,
+        included_tags=parsed_arguments.included_tags,
+        excluded_tags=parsed_arguments.excluded_tags,
+        ffmpeg_executable_path=parsed_arguments.ffmpeg_executable_path,
+        ffmpeg_extra_arguments=parsed_arguments.ffmpeg_extra_arguments,
+        is_dry_run=parsed_arguments.is_dry_run
+    )
+
+
+if __name__ == "__main__":
+    main()
