@@ -70,7 +70,8 @@ class ExtendConstAction(Action):
 
         setattr(namespace, self.dest, items)
 
-
+# Tags processor is anything callable, which takes dict of tags with their values,
+# Path of source file and float duration in seconds
 TagsProcessor = Callable[[dict[str, str], Path, float], dict[str, str]]
 
 
