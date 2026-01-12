@@ -229,7 +229,7 @@ class CueSheet(HierarchyParsable):
 TAGS: list[tuple[str, str]] = [
     ("performer", "artist"),
     ("album", "album"),
-    ("number", "tracknumber"),
+    ("number", "track"),
     ("title", "title"),
     ("isrc", "isrc"),
     ("GENRE", "genres"),
@@ -242,7 +242,7 @@ INETEGER_TAGS: set[str] = {"number"}
 def get_cue_sheet_ffmpeg_extraction_runs(
     cue_sheet: CueSheet,
     parent_directory: str | Path = ".",
-    output_file_name_formatting: str = "./{artist}/{album}/{number:02}. {title}.{file_suffix}",
+    output_file_name_formatting: str = "./{artist}/{album}/{track:02}. {title}.{file_suffix}",
     extra_ffmpeg_arguments: Optional[list[str | Path]] = None
 ) -> Iterable[tuple[CueTrack, Path, list[str | Path]]]:
     # HURT: that can be made lazy, but there still is
@@ -340,7 +340,7 @@ def create_argument_parser() -> ArgumentParser:
     arguments_parser.add_argument("--cue-sheet-file-encoding", "--cue-encoding", type=str, default="utf8", help="Encoding of .cue file")
     arguments_parser.add_argument("--parent-directory-replacement", type=str, required=False, help="Replacement for parent directory")
 
-    arguments_parser.add_argument("--output-file-name-formatting", "-o", type=str, default="./{artist}/{album}/{tracknumber:02}. {title}{file_suffix}", help="Format of path for output files")
+    arguments_parser.add_argument("--output-file-name-formatting", "-o", type=str, default="./{artist}/{album}/{track:02}. {title}{file_suffix}", help="Format of path for output files")
     arguments_parser.add_argument("--create-output-files-parent-directories", "-p", action="store_true", default=False, help="Create parent directories for output files")
 
     arguments_parser.add_argument("--ffmpeg-executable-path", "--ffmpeg", type=Path, default=Path("ffmpeg"), help="Path for ffmpeg executable")
