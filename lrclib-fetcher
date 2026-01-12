@@ -169,7 +169,7 @@ def integrate_lyrics_into_tags(
 
     ffmpeg_arguments.append(output_file_path)
 
-    ffmpeg_run = run_subprocess(
+    return run_subprocess(
         executable=ffmpeg_path,
         args=ffmpeg_arguments,
         capture_output=True,
@@ -253,9 +253,10 @@ def process_file(
         try:
             lyrics_integrated_file_path: Optional[Path] = None
             with NamedTemporaryFile(suffix=file_path.suffix, mode="rb", delete=False) as lyrics_integrated_file:
-                lyrics_integrated_file_path = lyrics_integrated_file.name
+                lyrics_integrated_file_path = Path(lyrics_integrated_file.name)
 
-                processing_report.output_file_path = integrate_lyrics_into_tags(file_path, lyrics_content, lyrics_integrated_file_path, ffmpeg_path, extra_ffmpeg_arguments)
+                integrate_lyrics_into_tags(file_path, lyrics_content, lyrics_integrated_file_path, ffmpeg_path, extra_ffmpeg_arguments)
+                processing_report.output_file_path = lyrics_integrated_file_path
 
             file_stat = file_path.stat()
             chmod(lyrics_integrated_file_path, file_stat.st_mode)
