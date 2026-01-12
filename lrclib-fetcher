@@ -151,7 +151,7 @@ def get_lyrics_by_file(
 
     if track_name is None or artist_name is None or album_name is None:
         raise InformationNotFoundError(*map(lambda i: i is not None, [track_name, artist_name, album_name]))
-    
+
     return get_lyrics(track_name, artist_name, album_name, track_duration, user_agent=user_agent)
 
 
@@ -195,13 +195,13 @@ def save_lyrics_file(
 ):
     if encoding is None:
         encoding = "utf-8"
-    
+
     lyrics_file_suffix = ".lrc" if lyrics_type == LyricsType.SYNCED else ".txt"
     lyrics_file_path = music_file_path.with_suffix(lyrics_file_suffix)
 
     with open(lyrics_file_path, mode="wt", encoding=encoding) as lyrics_file:
         lyrics_file.write(lyrics_content)
-    
+
     return lyrics_file_path
 
 
@@ -236,7 +236,7 @@ def process_file(
     if found_lyrics is None:
         processing_report.are_lyrics_found = False
         return processing_report
-    
+
     lyrics_type, lyrics_content = found_lyrics
 
     processing_report.are_lyrics_found = True
@@ -248,7 +248,7 @@ def process_file(
         except Exception as error:
             processing_report.error = error
             return processing_report
-    
+
     if integration_targets.is_it(lyrics_type):
         try:
             lyrics_integrated_file_path: Optional[Path] = None
@@ -256,7 +256,7 @@ def process_file(
                 lyrics_integrated_file_path = lyrics_integrated_file.name
 
                 processing_report.output_file_path = integrate_lyrics_into_tags(file_path, lyrics_content, lyrics_integrated_file_path, ffmpeg_path, extra_ffmpeg_arguments)
-            
+
             file_stat = file_path.stat()
             chmod(lyrics_integrated_file_path, file_stat.st_mode)
             chown(lyrics_integrated_file_path, file_stat.st_uid, file_stat.st_gid)
@@ -264,7 +264,7 @@ def process_file(
         except Exception as error:
             processing_report.error = error
             return processing_report
-    
+
     processing_report.is_success = True
     return processing_report
 
