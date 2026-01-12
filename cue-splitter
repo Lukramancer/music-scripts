@@ -262,11 +262,11 @@ def get_cue_sheet_ffmpeg_extraction_runs(
 
         formattings["file_suffix"] = track.file.path.suffix
 
-        output_file_path: Path = Path(output_file_name_formatting.format_map(formattings))
-        ffmpeg_arguments.append(output_file_path)
-
         if extra_ffmpeg_arguments is not None:
             ffmpeg_arguments.extend(extra_ffmpeg_arguments)
+
+        output_file_path: Path = Path(output_file_name_formatting.format_map(formattings))
+        ffmpeg_arguments.append(output_file_path)
 
         yield (track, output_file_path, ffmpeg_arguments)
 
