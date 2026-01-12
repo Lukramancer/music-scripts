@@ -27,7 +27,7 @@ class HierarchyParsable(AbstractBaseClass):
     @abstract_method
     def get_upper(self) -> Optional[Self]:
         ...
-    
+
     @abstract_method
     def parse_command(self, command: str) -> Self:
         ...
@@ -46,7 +46,7 @@ class HierarchyParsable(AbstractBaseClass):
                     break
             else:
                 raise ValueError(f"\"{command}\" is not parseable")
-        
+
         return initial
 
     @abstract_method
@@ -60,7 +60,7 @@ class HierarchyParsable(AbstractBaseClass):
             return hierarchy_upper_object.get_meta_recursively(key)
         else:
             return None
-        
+
 
 @dataclass(order=True)
 class CuePosition:
@@ -87,7 +87,7 @@ class CueTrack(HierarchyParsable):
 
     def get_position(self, index: int) -> CuePosition:
         return self.indexes[index]
-    
+
     def get_lowest_position(self) -> CuePosition:
         return min(self.indexes.values())
 
@@ -97,7 +97,7 @@ class CueTrack(HierarchyParsable):
     def get_performer(self) -> Optional[str]:
         if self.performer is not None:
             return self.performer
-        
+
         return self.file.cd.performer
 
     def get_upper(self) -> HierarchyParsable:
@@ -132,7 +132,7 @@ class CueTrack(HierarchyParsable):
             return self.isrc
         else:
             return self.rems_meta.get(key)
-    
+
     def get_tag(self, tag: str) -> Optional[str]:
         if tag.lower() in {"album", "albumtitle", "album_title"}:
             return self.file.get_meta_recursively("title")
@@ -144,7 +144,7 @@ class CueTrack(HierarchyParsable):
 class CueFile(HierarchyParsable):
     sheet: Any = dataclass_field() #: CueSheet
     path: Path
-    format: str 
+    format: str
     tracks: list[CueTrack] = dataclass_field(default_factory=list)
     rems_meta: dict[str, str] = dataclass_field(default_factory=dict)
 
@@ -208,7 +208,7 @@ class CueSheet(HierarchyParsable):
     def get_tracks(self) -> Iterable[CueTrack]:
         for file in self.files:
             yield from file.get_tracks()
-    
+
     def get_meta(self, key: str) -> Optional[str]:
         if key == "title":
             return self.title
@@ -289,7 +289,7 @@ def run_cue_sheet_ffmpeg_extractions(
     for cue_track, output_file_path, ffmpeg_run_arguments in ffmpeg_runs_arguments:
         if create_output_files_parent_directories:
             output_file_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         run_subprocess(executable=ffmpeg_executable_path, args=ffmpeg_run_arguments)
 
 
