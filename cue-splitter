@@ -151,7 +151,7 @@ class CueFile(HierarchyParsable):
     def get_upper(self) -> HierarchyParsable:
         return self.sheet
 
-    def parse_command(self, command: str) -> Self:
+    def parse_command(self, command: str) -> HierarchyParsable:
         if (track_command_match := TRACK_COMMAND_REGEX.fullmatch(command)) is not None:
             self.tracks.append(CueTrack(
                 file=self,
@@ -180,8 +180,8 @@ class CueSheet(HierarchyParsable):
 
     def get_upper(self) -> Optional[Self]:
         return None
-    
-    def parse_command(self, command: str) -> Self:
+
+    def parse_command(self, command: str) -> HierarchyParsable:
         if (title_command_match := TITLE_COMMAND_REGEX.fullmatch(command)) is not None:
             self.title = title_command_match.group("title")
             return self
