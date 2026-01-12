@@ -6,7 +6,7 @@ from argparse import ArgumentParser, REMAINDER
 from typing import Optional, Self, Iterable, ClassVar, Any
 from abc import ABC as AbstractBaseClass, abstractmethod as abstract_method
 from dataclasses import dataclass, field as dataclass_field
-from itertools import zip_longest, starmap as star_map
+from itertools import zip_longest
 from pathlib import Path
 
 
