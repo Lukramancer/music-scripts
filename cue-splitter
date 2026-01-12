@@ -279,7 +279,7 @@ def run_cue_sheet_ffmpeg_extractions(
     ffmpeg_executable_path: Path = Path("ffmpeg"),
     extra_ffmpeg_arguments: Optional[list[str | Path]] = None
 ):
-    ffmpeg_runs_arguments: tuple[CueTrack, Path, list[str | Path]] = get_cue_sheet_ffmpeg_extraction_runs(
+    ffmpeg_runs_arguments: Iterable[tuple[CueTrack, Path, list[str | Path]]] = get_cue_sheet_ffmpeg_extraction_runs(
         cue_sheet=cue_sheet,
         parent_directory=parent_directory,
         output_file_name_formatting=output_file_name_formatting,
