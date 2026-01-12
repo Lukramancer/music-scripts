@@ -13,7 +13,7 @@ from argparse import ArgumentParser, REMAINDER
 from dataclasses import dataclass
 from tempfile import NamedTemporaryFile
 from shutil import move
-from os import chmod, chown, replace
+from os import chmod, chown
 
 
 class LyricsType(Enum):
