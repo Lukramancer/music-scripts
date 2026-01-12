@@ -178,7 +178,7 @@ def generate_ffmpeg_command(
     metadata: dict[str, str],
     output_file_path: Path | str,
     ffmpeg_extra_arguments: Optional[Iterable[str | Path]] = None,
-):
+) -> list[str | Path]:
     ffmpeg_arguments: list[str | Path] = ["ffmpeg", "-hide_banner"]
     ffmpeg_arguments.extend(track.get_ffmpeg_extraction_arguments())
 
