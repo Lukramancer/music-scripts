@@ -81,7 +81,6 @@ class PathTagsProcessor:
 
     @classmethod
     def from_argument(cls, option: str) -> Self:
-        print(option)
         return cls(compile_regex(option))
 
     def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
@@ -320,7 +319,6 @@ def main():
 
     argument_parser = create_argument_parser(ffmpeg_path, ffprobe_path)
     parsed_arguments = argument_parser.parse_args(namespace=Namespace(tags_processors=list()))
-    print(parsed_arguments, end="\n\n")
 
     ffprobe_path: Optional[Path] = parsed_arguments.ffprobe_executable_path
     tracks: list[Track] = list[Track]()
