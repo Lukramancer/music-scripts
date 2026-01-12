@@ -210,7 +210,7 @@ class CueSheet(HierarchyParsable):
             raise HierarchyParsable.UnsupportedCommandError()
 
     @classmethod
-    def parse(cls, commands: Iterable[str]) -> Self:
+    def parse_commands(cls, commands: Iterable[str]) -> Self:
         return super().parse(cls(), commands)
 
     def get_tracks(self) -> Iterable[CueTrack]:
@@ -303,7 +303,7 @@ def run_cue_sheet_ffmpeg_extractions(
 
 def parse_cue_sheet_file( cue_sheet_file_path: Path, cue_sheet_file_encoding: str = "utf-8"):
     with open(cue_sheet_file_path, mode="rt", encoding=cue_sheet_file_encoding) as cue_sheet_file:
-        return CueSheet.parse(map(str.rstrip, cue_sheet_file))
+        return CueSheet.parse_commands(map(str.rstrip, cue_sheet_file))
 
 
 def perform(
