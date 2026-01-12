@@ -34,7 +34,7 @@ class HierarchyParsable(AbstractBaseClass):
 
     @classmethod
     def parse(cls, initial: Self, commands: Iterable[str]) -> Self:
-        current: Self = initial
+        current: Optional[Self] = initial
 
         for command in commands:
             while current is not None:
