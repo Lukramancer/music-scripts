@@ -309,6 +309,18 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
     return argument_parser
 
 
+def extract_file_tracks_from_parsed_arguments(parsed_arguments: Namespace) -> Iterable[FileTrack]:
+    ffprobe_path: Optional[Path] = parsed_arguments.ffprobe_executable_path
+
+    file_tracks_paths: Optional[list[Path]] = parsed_arguments.file_tracks_paths
+    if ffprobe_path is not None and file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
+        return [FileTrack.from_path(file_track_path, ffprobe_path) for file_track_path in file_tracks_paths]
+    elif file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
+        raise ValueError("ffprobe was not found")
+
+    return []
+
+
 def main():
     from sys import stderr
     from shutil import which
@@ -320,15 +332,9 @@ def main():
     argument_parser = create_argument_parser(ffmpeg_path, ffprobe_path)
     parsed_arguments = argument_parser.parse_args(namespace=Namespace(tags_processors=list()))
 
-    ffprobe_path: Optional[Path] = parsed_arguments.ffprobe_executable_path
     tracks: list[Track] = list[Track]()
 
-    file_tracks_paths: Optional[list[Path]] = parsed_arguments.file_tracks_paths
-    if ffprobe_path is not None and file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
-        tracks.extend([FileTrack.from_path(file_track_path, ffprobe_path) for file_track_path in file_tracks_paths])
-    elif file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
-        stderr.write("Can not find ffprobe executable for processing provided tracks, specify path to ffprobe executable via --ffprobe option\n")
-        exit(1)
+    tracks.extend(extract_file_tracks_from_parsed_arguments(parsed_arguments))
 
     process(
         tracks=tracks,
