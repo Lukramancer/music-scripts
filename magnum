@@ -9,6 +9,7 @@ from json import dumps as serialize_json_to_str, loads as deserialize_json_from_
 from argparse import ArgumentParser, Namespace, Action
 from abc import ABC as AbstractBaseClass, abstractmethod as abstract_method
 from shlex import split as split_shell_arguments
+from os.path import sep as path_separator
 
 
 class Track(AbstractBaseClass):
@@ -194,10 +195,24 @@ def generate_ffmpeg_command(
     return ffmpeg_arguments
 
 
+def generate_output_file_path(
+    track_tags: dict[str, str],
+    output_file_path_format: str,
+    output_file_path_separator_replacment: Optional[str] = None,
+) -> Path:
+    if output_file_path_separator_replacment is not None:
+        output_file_path_tags = {tag_name: tag_value.replace(path_separator, output_file_path_separator_replacment) for tag_name, tag_value in track_tags.items()}
+    else:
+        output_file_path_tags = track_tags
+
+    return Path(output_file_path_format.format_map(output_file_path_tags))
+
+
 def plan(
     tracks: Iterable[Track],
     tags_processors: list[TagsProcessor],
     output_file_path_format: str,
+    output_file_path_separator_replacment: Optional[str] = None,
     included_tags: Optional[list[str]] = None,
     excluded_tags: Optional[list[str]] = None,
     ffmpeg_extra_arguments: Optional[list[str | Path]] = None
@@ -207,7 +222,7 @@ def plan(
         for tags_processor in tags_processors:
             track_tags = tags_processor(track_tags, track_path, track_duration)
 
-        output_file_path = Path(output_file_path_format.format_map(track_tags))
+        output_file_path = generate_output_file_path(track_tags, output_file_path_format, output_file_path_separator_replacment)
 
         tags_filter: Callable[[str], bool] = lambda tag_name: True
         if included_tags is not None and included_tags.__len__() > 0:
@@ -229,6 +244,7 @@ def process(
     tracks: Iterable[Track],
     tags_processors: list[TagsProcessor],
     output_file_path_format: str,
+    output_file_path_separator_replacment: Optional[str] = None,
     create_parent_directories: bool = True,
     included_tags: Optional[list[str]] = None,
     excluded_tags: Optional[list[str]] = None,
@@ -239,6 +255,7 @@ def process(
     plans = plan(
         tracks=tracks, tags_processors=tags_processors,
         output_file_path_format=output_file_path_format,
+        output_file_path_separator_replacment=output_file_path_separator_replacment,
         included_tags=included_tags, excluded_tags=excluded_tags,
         ffmpeg_extra_arguments=ffmpeg_extra_arguments
     )
@@ -268,6 +285,8 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
     output_argument_group.add_argument("-p", "--create-parent-directories", action="store_true", help="Create parent directories for each file")
     # NOTE: uses python str, so it is possible and useful to align track number like "{track:0>2}"
     output_argument_group.add_argument("-o", "--output", type=str, required=True, help="Format string for output files paths")
+    # NOTE: maybe there should be a way to replace so called reserved characters
+    output_argument_group.add_argument("--separator-replacement", type=str, help="Format string for output files paths")
     output_argument_group.add_argument("--dry-run", "--dry", dest="is_dry_run", action="store_true", help="Only print runnable ffmpeg commands")
 
     tags_processors_argument_group = argument_parser.add_argument_group("Tags processing")
@@ -340,6 +359,7 @@ def main():
         tracks=tracks,
         tags_processors=parsed_arguments.tags_processors,
         output_file_path_format=parsed_arguments.output,
+        output_file_path_separator_replacment=parsed_arguments.separator_replacement,
         create_parent_directories=parsed_arguments.create_parent_directories,
         included_tags=parsed_arguments.included_tags,
         excluded_tags=parsed_arguments.excluded_tags,
