@@ -290,6 +290,7 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
     output_argument_group.add_argument("--dry-run", "--dry", dest="is_dry_run", action="store_true", help="Only print runnable ffmpeg commands")
 
     tags_processors_argument_group = argument_parser.add_argument_group("Tags processing")
+    tags_processors_argument_group.set_defaults(tags_processors=list())
     tags_processors_argument_group.add_argument("--infer-from-path",
         type=PathTagsProcessor.from_argument, action="append", dest="tags_processors",
         metavar="<regex>",
@@ -349,7 +350,7 @@ def main():
     ffprobe_path: Optional[Path] = Path(ffprobe_path_str) if ffprobe_path_str is not None else None
 
     argument_parser = create_argument_parser(ffmpeg_path, ffprobe_path)
-    parsed_arguments = argument_parser.parse_args(namespace=Namespace(tags_processors=list()))
+    parsed_arguments = argument_parser.parse_args()
 
     tracks: list[Track] = list[Track]()
 
