@@ -18,7 +18,7 @@ class Track(AbstractBaseClass):
         ...
 
     @abstract_method
-    def get_initial_info(self) -> tuple[dict[str, str], float, Path]:
+    def get_initial_info(self) -> tuple[Tags, float, Path]:
         ...
 
 
@@ -34,7 +34,7 @@ class FileTrack(Track):
     def get_ffmpeg_extraction_arguments(self) -> list[str | Path]:
         return ["-i", self.file_path]
 
-    def get_initial_info(self) -> tuple[dict[str, str], float, Path]:
+    def get_initial_info(self) -> tuple[Tags, float, Path]:
         ffprobe_arguments: list[str | Path] = ["ffprobe", "-loglevel", "quiet", "-show_format", "-of", "json"]
         ffprobe_arguments.extend(self.get_ffmpeg_extraction_arguments())
 
@@ -71,10 +71,11 @@ class ExtendConstAction(Action):
 
         setattr(namespace, self.dest, items)
 
+Tags = dict[str, str]
+
 # Tags processor is anything callable, which takes dict of tags with their values,
 # Path of source file and float duration in seconds
-TagsProcessor = Callable[[dict[str, str], Path, float], dict[str, str]]
-
+TagsProcessor = Callable[[Tags, Path, float], Tags]
 
 @dataclass
 class PathTagsProcessor:
@@ -84,10 +85,10 @@ class PathTagsProcessor:
     def from_argument(cls, option: str) -> Self:
         return cls(compile_regex(option))
 
-    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         file_path_format_match = self.file_path_format.fullmatch(str(file_path))
 
-        return file_path_format_match.groupdict() if file_path_format_match is not None else dict[str, str]()
+        return file_path_format_match.groupdict() if file_path_format_match is not None else Tags()
 
 
 @dataclass
@@ -98,7 +99,7 @@ class EraserTagsProcessor:
     def from_argument(cls, option: str) -> Self:
         return cls(option)
 
-    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         return {tag_name: tag_value for tag_name, tag_value in tags.items() if tag_name != self.eraseble_tag}
 
 
@@ -111,7 +112,7 @@ class WriterTagsProcessor:
     def from_argument(cls, option: str) -> Self:
         return cls(*option.split('=', maxsplit=1))
 
-    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         return tags | {self.writable_tag: self.writable_tag_value}
 
 
@@ -124,7 +125,7 @@ class FillerTagsProcessor:
     def from_argument(cls, option: str) -> Self:
         return cls(*option.split('=', maxsplit=1))
 
-    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         return ({self.fillable_tag: self.fillable_tag_value} | tags) if self.fillable_tag not in tags else tags
 
 
@@ -137,7 +138,7 @@ class OverriderTagsProcessor:
     def from_argument(cls, option: str) -> Self:
         return cls(*option.split('=', maxsplit=1))
 
-    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         return (tags | {self.overriadable_tag: self.overriadable_tag_value}) if self.overriadable_tag in tags else tags
 
 
@@ -158,7 +159,7 @@ class ExternalTagsProcessor:
         return cls(Path(argument_pattern_match.group("executable_path").replace(r"\:", ":")), argument_pattern_match.group("arguments"))
 
 
-    def __call__(self, tags: dict[str, str], file_path: Path, duration: float) -> dict[str, str]:
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         arguments = [self.executable_path.name]
         if self.arguments is not None:
             arguments.extend(split_shell_arguments(self.arguments))
@@ -176,7 +177,7 @@ class ExternalTagsProcessor:
 
 def generate_ffmpeg_command(
     track: Track,
-    metadata: dict[str, str],
+    metadata: Tags,
     output_file_path: Path | str,
     ffmpeg_extra_arguments: Optional[Iterable[str | Path]] = None,
 ) -> list[str | Path]:
@@ -196,7 +197,7 @@ def generate_ffmpeg_command(
 
 
 def generate_output_file_path(
-    track_tags: dict[str, str],
+    track_tags: Tags,
     output_file_path_format: str,
     output_file_path_separator_replacment: Optional[str] = None,
 ) -> Path:
@@ -230,7 +231,7 @@ def plan(
         elif excluded_tags is not None and excluded_tags.__len__() > 0:
             tags_filter = lambda tag_name: tag_name not in excluded_tags
 
-        track_tags_to_inject: dict[str, str] = {tag_name: tag_value for tag_name, tag_value in track_tags.items() if tags_filter(tag_name)}
+        track_tags_to_inject: Tags = {tag_name: tag_value for tag_name, tag_value in track_tags.items() if tags_filter(tag_name)}
 
         yield output_file_path, generate_ffmpeg_command(
             track=track,
