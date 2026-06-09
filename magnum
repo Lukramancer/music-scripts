@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
+from itertools import starmap
 from re import Pattern, compile as compile_regex
 from subprocess import run as run_subprocess
-from typing import Callable, Optional, Iterable, ClassVar, Self
+from typing import Callable, Optional, Iterable, Any
 from pathlib import Path
 from dataclasses import dataclass
 from json import dumps as serialize_json_to_str, loads as deserialize_json_from_str
@@ -75,6 +76,50 @@ class ExtendConstAction(Action):
         setattr(namespace, self.dest, items)
 
 
+class AppendMultiValueTypeActionFactory[T, FactoryArgumentsPack]:
+    @classmethod
+    def create(cls, base_name: str, types: Iterable[Callable[[str], Any]], factory: Callable[[Unpack[FactoryArgumentsPack]], T]):
+        return type(base_name + "ParseAction", (Action, ), {
+            "__init__": cls.__init,
+            "__call__": cls.__parse,
+            "TYPES": types,
+            "FACTORY": factory
+        })
+
+    @classmethod
+    def create_from_class(cls, class_cls, types: Iterable[Callable[[str], Any]]):
+        return cls.create(class_cls.__name__, types, class_cls)
+
+    @staticmethod
+    def __init(self, option_strings, dest, nargs=None, const=None, default=None, required=False, help=None, metavar=None):
+        if nargs is not None:
+            raise ValueError("nargs should not be specified")
+
+        Action.__init__(self, option_strings=option_strings, dest=dest, nargs=len(self.TYPES), const=const, default=default, required=required, help=help, metavar=metavar)
+
+    @staticmethod
+    def __parse(self, parser, namespace, values, option_string=None):
+        if values is None:
+            values = []
+        elif isinstance(values, str):
+            values = [values]
+
+        value = self.FACTORY(*starmap(lambda type_function, value: type_function(value), zip(self.TYPES, values)))
+
+        items = getattr(namespace, self.dest, None)
+
+        if items is None:
+            items = []
+        elif type(items) is list:
+            items = items[:]
+        else:
+            import copy
+            items = copy.copy(items)
+
+        items.append(value)
+        setattr(namespace, self.dest, items)
+
+
 # Tags processor is anything callable, which takes dict of tags with their values,
 # Path of source file and float duration in seconds
 TagsProcessor = Callable[[Tags, Path, float], Tags]
@@ -84,8 +129,8 @@ class PathTagsProcessor:
     file_path_format: Pattern
 
     @classmethod
-    def from_argument(cls, option: str) -> Self:
-        return cls(compile_regex(option))
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex])
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         file_path_format_match = self.file_path_format.fullmatch(str(file_path))
@@ -98,8 +143,8 @@ class EraserTagsProcessor:
     eraseble_tag: str
 
     @classmethod
-    def from_argument(cls, option: str) -> Self:
-        return cls(option)
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [str])
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         return {tag_name: tag_value for tag_name, tag_value in tags.items() if tag_name != self.eraseble_tag}
@@ -111,8 +156,9 @@ class WriterTagsProcessor:
     writable_tag_value: str
 
     @classmethod
-    def from_argument(cls, option: str) -> Self:
-        return cls(*option.split('=', maxsplit=1))
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
+
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         return tags | {self.writable_tag: self.writable_tag_value}
@@ -124,8 +170,8 @@ class FillerTagsProcessor:
     fillable_tag_value: str
 
     @classmethod
-    def from_argument(cls, option: str) -> Self:
-        return cls(*option.split('=', maxsplit=1))
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         return ({self.fillable_tag: self.fillable_tag_value} | tags) if self.fillable_tag not in tags else tags
@@ -137,8 +183,8 @@ class OverriderTagsProcessor:
     overriadable_tag_value: str
 
     @classmethod
-    def from_argument(cls, option: str) -> Self:
-        return cls(*option.split('=', maxsplit=1))
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         return (tags | {self.overriadable_tag: self.overriadable_tag_value}) if self.overriadable_tag in tags else tags
@@ -146,19 +192,12 @@ class OverriderTagsProcessor:
 
 @dataclass
 class ExternalTagsProcessor:
-    argument_pattern: ClassVar[Pattern] = compile_regex(r"^(?P<executable_path>(?:(?:\\:)|[^:])+)(?::(?P<arguments>.+))?$")
-
     executable_path: Path
     arguments: Optional[str]
 
     @classmethod
-    def from_argument(cls, option: str) -> Self:
-        argument_pattern_match = cls.argument_pattern.fullmatch(option)
-
-        if argument_pattern_match is None:
-            raise ValueError("Option string for ExternalTagsProcessor must be the following format: \"<executable_path>[:arguments]\"")
-
-        return cls(Path(argument_pattern_match.group("executable_path").replace(r"\:", ":")), argument_pattern_match.group("arguments"))
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [Path, str])
 
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
@@ -295,27 +334,28 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
     tags_processors_argument_group = argument_parser.add_argument_group("Tags processing")
     tags_processors_argument_group.set_defaults(tags_processors=list())
     tags_processors_argument_group.add_argument("--infer-from-path",
-        type=PathTagsProcessor.from_argument, action="append", dest="tags_processors",
+        action=PathTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<regex>",
         help="Regexp with named groups, matches to file path and every pair of group name and captured value will be passed to tags set")
     tags_processors_argument_group.add_argument("--erase",
-        type=EraserTagsProcessor.from_argument, action="append", dest="tags_processors",
+        action=EraserTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name>",
         help="String of format \"<tag_name>\" - erases <tag_name> from tags set")
     tags_processors_argument_group.add_argument("--write",
-        type=WriterTagsProcessor.from_argument, action="append", dest="tags_processors",
-        metavar="<tag_name>=<tag_value>",
+        action=WriterTagsProcessor.get_parsing_action(), dest="tags_processors",
+        metavar="<tag_name> <tag_value>",
         help="String of format \"<tag_name>=<tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file")
     tags_processors_argument_group.add_argument("--override",
-        type=OverriderTagsProcessor.from_argument, action="append", dest="tags_processors",
-        metavar="<tag_name>=<tag_value>",
+        action=OverriderTagsProcessor.get_parsing_action(), dest="tags_processors",
+        metavar="<tag_name> <tag_value>",
         help="String of format \"<tag_name>=<tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was in original tags set")
     tags_processors_argument_group.add_argument("--fill",
-        type=FillerTagsProcessor.from_argument, action="append", dest="tags_processors",
-        help="String of format \"<tag_name>=<tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was not in original tags set")
+        action=FillerTagsProcessor.get_parsing_action(), dest="tags_processors",
+        metavar="<tag_name> <tag_value>",
+        help="String of format \"<tag_name> <tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was not in original tags set")
     tags_processors_argument_group.add_argument("--external", "--external-processor",
-        type=ExternalTagsProcessor.from_argument, action="append", dest="tags_processors",
-        metavar="<executable_path>[:arguments]",
+        action=ExternalTagsProcessor.get_parsing_action(), dest="tags_processors",
+        metavar="<executable_path> [arguments]",
         help="String of format \"<executable_path>[:arguments]\" which will be executed with provided in stdin json of current state of tags")
 
     final_tags_argument_group = output_argument_group.add_mutually_exclusive_group()
