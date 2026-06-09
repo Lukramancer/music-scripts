@@ -404,68 +404,68 @@ def process(
 def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Optional[Path] = None) -> ArgumentParser:
     argument_parser = ArgumentParser()
 
-    argument_parser.add_argument("file_tracks_paths", type=Path, nargs="*", help="Processable files paths")
+    argument_parser.add_argument("file_tracks_paths", type=Path, nargs="*", help="processable files paths")
 
-    output_argument_group = argument_parser.add_argument_group("Output")
-    output_argument_group.add_argument("-p", "--create-parent-directories", action="store_true", help="Create parent directories for each file")
+    output_argument_group = argument_parser.add_argument_group("output")
+    output_argument_group.add_argument("-p", "--create-parent-directories", action="store_true", help="create parent directories for each file")
     # NOTE: uses python str, so it is possible and useful to align track number like "{track:0>2}"
-    output_argument_group.add_argument("-o", "--output", type=str, required=True, help="Format string for output files paths")
+    output_argument_group.add_argument("-o", "--output", type=str, required=True, help="format string for output files paths")
     # NOTE: maybe there should be a way to replace so-called reserved characters
-    output_argument_group.add_argument("--separator-replacement", type=str, help="Format string for output files paths")
-    output_argument_group.add_argument("--dry-run", "--dry", dest="is_dry_run", action="store_true", help="Only print runnable ffmpeg commands")
+    output_argument_group.add_argument("--separator-replacement", type=str, help="string which replaces path separator in output files paths")
+    output_argument_group.add_argument("--dry-run", "--dry", dest="is_dry_run", action="store_true", help="only print runnable ffmpeg commands")
 
-    tags_processors_argument_group = argument_parser.add_argument_group("Tags processing")
+    tags_processors_argument_group = argument_parser.add_argument_group("tags processing")
     tags_processors_argument_group.set_defaults(tags_processors=list())
     tags_processors_argument_group.add_argument("--infer-from-path",
         action=PathTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<regex>",
-        help="Regexp with named groups, matches to file path and every pair of group name and captured value will be passed to tags set")
+        help="matches <regex> to file path and every pair of group name and captured value will be passed to tags set")
     tags_processors_argument_group.add_argument("--erase",
         action=EraserTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name>",
-        help="String of format \"<tag_name>\" - erases <tag_name> from tags set")
+        help="removes tag with name <tag_name> from tags set")
     tags_processors_argument_group.add_argument("--erase-regex", "--erase-r",
         action=EraserRegexTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name_regex>",
-        help="String of format \"<tag_name_regex>\" - erases all tags with name matching <tag_name_regex>")
+        help="removes all tags with name matching <tag_name_regex>")
     tags_processors_argument_group.add_argument("--write",
         action=WriterTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name> <tag_value>",
-        help="String of format \"<tag_name>=<tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file")
+        help="makes tag with name <tag_name> and value <tag_value> written in resulting file")
     tags_processors_argument_group.add_argument("--override",
         action=OverriderTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name> <tag_value>",
-        help="String of format \"<tag_name>=<tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was in original tags set")
+        help="makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was in original tags set")
     tags_processors_argument_group.add_argument("--override-regex", "--override-r",
         action=RegexOverriderTagsProcessor.get_parsing_action(), dest="tags_processors",
-        metavar="<tag_name_regex> <tag_value_regex> <tag_value>",
-        help="TODO")
+        metavar="<tag_name_regex> <tag_value_regex> <tag_new_value_template>",
+        help="replaces value of tag with name matching <tag_name_regex> and value mathing <tag_value_regex> with <tag_new_value_template> expanded by groups within matched <tag_value_regex>")
     tags_processors_argument_group.add_argument("--replace-tag-value-regex", "--replace-r",
         action=RegexReplacerTagsProcessor.get_parsing_action(), dest="tags_processors",
-        metavar="<tag_name_regex> <tag_value_regex> <tag_value>",
-        help="TODO")
+        metavar="<tag_name_regex> <string_regex> <replacement>",
+        help="replaces <string_regex> with <replacement> within values of tags matching <tag_name_regex>")
     tags_processors_argument_group.add_argument("--fill",
         action=FillerTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name> <tag_value>",
-        help="String of format \"<tag_name> <tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was not in original tags set")
+        help="makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was not in original tags set")
     tags_processors_argument_group.add_argument("--rename",
         action=RenameTagTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name> <tag_new_name>",
-        help="Renames from <tag_name> to <tag_new_name>")
+        help="renames from <tag_name> to <tag_new_name>")
     tags_processors_argument_group.add_argument("--rename-regex", "--rename-r",
         action=RenameTagRegexTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name_regex> <tag_new_name_template>",
-        help="Renames from <tag_name> to <tag_new_name>")
+        help="renames from <tag_name> to <tag_new_name>")
     tags_processors_argument_group.add_argument("--external", "--external-processor",
         action=ExternalTagsProcessor.get_parsing_action(), dest="tags_processors",
-        metavar="<executable_path> [arguments]",
-        help="String of format \"<executable_path>[:arguments]\" which will be executed with provided in stdin json of current state of tags")
+        metavar="<executable_path> <arguments>",
+        help="executes <executable_path> with <arguments> providing json of current state of tags to stdin")
 
     final_tags_argument_group = output_argument_group.add_mutually_exclusive_group()
     final_tags_argument_group.add_argument("--included-tags", type=str, nargs="*", help="List of tags should be written in audio files")
     final_tags_argument_group.add_argument("--excluded-tags", type=str, nargs="*", help="List of tags should NOT be written in audio files")
 
-    ffmpeg_argument_group = argument_parser.add_argument_group("FFmpeg")
+    ffmpeg_argument_group = argument_parser.add_argument_group("ffmpeg")
     ffmpeg_argument_group.add_argument("--ffmpeg-executable-path", "--ffmpeg", type=Path, help="Path to ffmpeg executable", default=ffmpeg_path)
     ffmpeg_argument_group.add_argument("--ffprobe-executable-path", "--ffprobe", type=Path, help="Path to ffprobe executable", default=ffprobe_path)
     ffmpeg_argument_group.add_argument("--ffmpeg-extra-arguments", type=split_shell_arguments, help="Additional options that will be passed to ffmpeg")
