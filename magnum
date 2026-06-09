@@ -12,6 +12,9 @@ from shlex import split as split_shell_arguments
 from os.path import sep as path_separator
 
 
+Tags = dict[str, str]
+
+
 class Track(AbstractBaseClass):
     @abstract_method
     def get_ffmpeg_extraction_arguments(self) -> list[str | Path]:
@@ -71,7 +74,6 @@ class ExtendConstAction(Action):
 
         setattr(namespace, self.dest, items)
 
-Tags = dict[str, str]
 
 # Tags processor is anything callable, which takes dict of tags with their values,
 # Path of source file and float duration in seconds
