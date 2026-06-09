@@ -3,7 +3,7 @@
 from itertools import starmap
 from re import Pattern, compile as compile_regex
 from subprocess import run as run_subprocess
-from typing import Callable, Optional, Iterable, Any
+from typing import Callable, Optional, Iterable, Any, Unpack
 from pathlib import Path
 from dataclasses import dataclass
 from json import dumps as serialize_json_to_str, loads as deserialize_json_from_str
@@ -151,6 +151,18 @@ class EraserTagsProcessor:
 
 
 @dataclass
+class EraserRegexTagsProcessor:
+    eraseble_tag_pattern: Pattern
+
+    @classmethod
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex])
+
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
+        return {tag_name: tag_value for tag_name, tag_value in tags.items() if self.eraseble_tag_pattern.fullmatch(tag_name) is None}
+
+
+@dataclass
 class WriterTagsProcessor:
     writable_tag: str
     writable_tag_value: str
@@ -190,6 +202,77 @@ class OverriderTagsProcessor:
         return (tags | {self.overriadable_tag: self.overriadable_tag_value}) if self.overriadable_tag in tags else tags
 
 
+@dataclass
+class RegexOverriderTagsProcessor:
+    overridable_tag_name_regex: Pattern
+    overridable_tag_value_regex: Pattern
+    tag_value_template: str
+    
+    @classmethod
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex, compile_regex, str])
+    
+    def process_tag(self, tag_name: str, tag_value: str) -> tuple[str, str]:
+        if self.overridable_tag_name_regex.fullmatch(tag_name) is None:
+            return (tag_name, tag_value)
+        
+        if (tag_value_match := self.overridable_tag_value_regex.fullmatch(tag_value)) is None:
+            return (tag_name, tag_value)
+        
+        return (tag_name, tag_value_match.expand(self.tag_value_template))
+    
+    
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
+        return dict(starmap(self.process_tag, tags.items()))
+
+
+@dataclass
+class RegexReplacerTagsProcessor:
+    overridable_tag_name_regex: Pattern
+    replaceable_substr_regex: Pattern
+    replacement: str
+    
+    @classmethod
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex, compile_regex, str])
+    
+    def process_tag(self, tag_name: str, tag_value: str) -> tuple[str, str]:
+        if self.overridable_tag_name_regex.fullmatch(tag_name) is None:
+            return (tag_name, tag_value)
+        
+        return (tag_name, self.replaceable_substr_regex.sub(self.replacement, tag_value))
+    
+    
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
+        return dict(starmap(self.process_tag, tags.items()))
+
+
+@dataclass
+class RenameTagTagsProcessor:
+    renameable_tag: str
+    new_tag: str
+
+    @classmethod
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
+
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
+        return {(self.new_tag if tag == self.renameable_tag else tag): tag_value for tag, tag_value in tags.items()}
+
+
+@dataclass
+class RenameTagRegexTagsProcessor:
+    renameable_tag_pattern: Pattern
+    new_tag_template: str
+
+    @classmethod
+    def get_parsing_action(cls):
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex, str])
+
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
+        return {(m.expand(self.new_tag_template) if (m := self.renameable_tag_pattern.fullmatch(tag)) is not None else tag): tag_value for tag, tag_value in tags.items()}
+
+    
 @dataclass
 class ExternalTagsProcessor:
     executable_path: Path
@@ -341,6 +424,10 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
         action=EraserTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name>",
         help="String of format \"<tag_name>\" - erases <tag_name> from tags set")
+    tags_processors_argument_group.add_argument("--erase-regex", "--erase-r",
+        action=EraserRegexTagsProcessor.get_parsing_action(), dest="tags_processors",
+        metavar="<tag_name_regex>",
+        help="String of format \"<tag_name_regex>\" - erases all tags with name matching <tag_name_regex>")
     tags_processors_argument_group.add_argument("--write",
         action=WriterTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name> <tag_value>",
@@ -349,10 +436,26 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
         action=OverriderTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name> <tag_value>",
         help="String of format \"<tag_name>=<tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was in original tags set")
+    tags_processors_argument_group.add_argument("--override-regex", "--override-r",
+        action=RegexOverriderTagsProcessor.get_parsing_action(), dest="tags_processors",
+        metavar="<tag_name_regex> <tag_value_regex> <tag_value>",
+        help="TODO")
+    tags_processors_argument_group.add_argument("--replace-tag-value-regex", "--replace-r",
+        action=RegexReplacerTagsProcessor.get_parsing_action(), dest="tags_processors",
+        metavar="<tag_name_regex> <tag_value_regex> <tag_value>",
+        help="TODO")
     tags_processors_argument_group.add_argument("--fill",
         action=FillerTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<tag_name> <tag_value>",
         help="String of format \"<tag_name> <tag_value>\" - makes tag with name <tag_name> and value <tag_value> written in resulting file if <tag_name> was not in original tags set")
+    tags_processors_argument_group.add_argument("--rename",
+        action=RenameTagTagsProcessor.get_parsing_action(), dest="tags_processors",
+        metavar="<tag_name> <tag_new_name>",
+        help="Renames from <tag_name> to <tag_new_name>")
+    tags_processors_argument_group.add_argument("--rename-regex", "--rename-r",
+        action=RenameTagRegexTagsProcessor.get_parsing_action(), dest="tags_processors",
+        metavar="<tag_name_regex> <tag_new_name_template>",
+        help="Renames from <tag_name> to <tag_new_name>")
     tags_processors_argument_group.add_argument("--external", "--external-processor",
         action=ExternalTagsProcessor.get_parsing_action(), dest="tags_processors",
         metavar="<executable_path> [arguments]",
