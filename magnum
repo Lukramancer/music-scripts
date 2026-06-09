@@ -331,7 +331,10 @@ def generate_output_file_path(
     output_file_path_separator_replacement: Optional[str] = None,
 ) -> Path:
     if output_file_path_separator_replacement is not None:
-        output_file_path_tags = {tag_name: tag_value.replace(path_separator, output_file_path_separator_replacement) for tag_name, tag_value in track_tags.items()}
+        output_file_path_tags = {
+            tag_name: tag_value.replace(path_separator, output_file_path_separator_replacement)
+            for tag_name, tag_value in track_tags.items()
+        }
     else:
         output_file_path_tags = track_tags
 
@@ -352,7 +355,11 @@ def plan(
         for tags_processor in tags_processors:
             track_tags = tags_processor(track_tags, track_path, track_duration)
 
-        output_file_path = generate_output_file_path(track_tags, output_file_path_format, output_file_path_separator_replacement)
+        output_file_path = generate_output_file_path(
+            track_tags,
+            output_file_path_format,
+            output_file_path_separator_replacement
+        )
 
         tags_filter: Callable[[str], bool] = lambda tag_name: True
         if included_tags is not None and included_tags.__len__() > 0:
