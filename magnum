@@ -140,26 +140,26 @@ class PathTagsProcessor:
 
 @dataclass
 class EraserTagsProcessor:
-    eraseble_tag: str
+    erasable_tag: str
 
     @classmethod
     def get_parsing_action(cls):
         return AppendMultiValueTypeActionFactory.create_from_class(cls, [str])
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return {tag_name: tag_value for tag_name, tag_value in tags.items() if tag_name != self.eraseble_tag}
+        return {tag_name: tag_value for tag_name, tag_value in tags.items() if tag_name != self.erasable_tag}
 
 
 @dataclass
 class EraserRegexTagsProcessor:
-    eraseble_tag_pattern: Pattern
+    erasable_tag_pattern: Pattern
 
     @classmethod
     def get_parsing_action(cls):
         return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex])
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return {tag_name: tag_value for tag_name, tag_value in tags.items() if self.eraseble_tag_pattern.fullmatch(tag_name) is None}
+        return {tag_name: tag_value for tag_name, tag_value in tags.items() if self.erasable_tag_pattern.fullmatch(tag_name) is None}
 
 
 @dataclass
@@ -191,15 +191,15 @@ class FillerTagsProcessor:
 
 @dataclass
 class OverriderTagsProcessor:
-    overriadable_tag: str
-    overriadable_tag_value: str
+    overridable_tag: str
+    overridable_tag_value: str
 
     @classmethod
     def get_parsing_action(cls):
         return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return (tags | {self.overriadable_tag: self.overriadable_tag_value}) if self.overriadable_tag in tags else tags
+        return (tags | {self.overridable_tag: self.overridable_tag_value}) if self.overridable_tag in tags else tags
 
 
 @dataclass
@@ -323,10 +323,10 @@ def generate_ffmpeg_command(
 def generate_output_file_path(
     track_tags: Tags,
     output_file_path_format: str,
-    output_file_path_separator_replacment: Optional[str] = None,
+    output_file_path_separator_replacement: Optional[str] = None,
 ) -> Path:
-    if output_file_path_separator_replacment is not None:
-        output_file_path_tags = {tag_name: tag_value.replace(path_separator, output_file_path_separator_replacment) for tag_name, tag_value in track_tags.items()}
+    if output_file_path_separator_replacement is not None:
+        output_file_path_tags = {tag_name: tag_value.replace(path_separator, output_file_path_separator_replacement) for tag_name, tag_value in track_tags.items()}
     else:
         output_file_path_tags = track_tags
 
@@ -337,7 +337,7 @@ def plan(
     tracks: Iterable[Track],
     tags_processors: list[TagsProcessor],
     output_file_path_format: str,
-    output_file_path_separator_replacment: Optional[str] = None,
+    output_file_path_separator_replacement: Optional[str] = None,
     included_tags: Optional[list[str]] = None,
     excluded_tags: Optional[list[str]] = None,
     ffmpeg_extra_arguments: Optional[list[str | Path]] = None
@@ -347,7 +347,7 @@ def plan(
         for tags_processor in tags_processors:
             track_tags = tags_processor(track_tags, track_path, track_duration)
 
-        output_file_path = generate_output_file_path(track_tags, output_file_path_format, output_file_path_separator_replacment)
+        output_file_path = generate_output_file_path(track_tags, output_file_path_format, output_file_path_separator_replacement)
 
         tags_filter: Callable[[str], bool] = lambda tag_name: True
         if included_tags is not None and included_tags.__len__() > 0:
@@ -369,7 +369,7 @@ def process(
     tracks: Iterable[Track],
     tags_processors: list[TagsProcessor],
     output_file_path_format: str,
-    output_file_path_separator_replacment: Optional[str] = None,
+    output_file_path_separator_replacement: Optional[str] = None,
     create_parent_directories: bool = True,
     included_tags: Optional[list[str]] = None,
     excluded_tags: Optional[list[str]] = None,
@@ -380,7 +380,7 @@ def process(
     plans = plan(
         tracks=tracks, tags_processors=tags_processors,
         output_file_path_format=output_file_path_format,
-        output_file_path_separator_replacment=output_file_path_separator_replacment,
+        output_file_path_separator_replacement=output_file_path_separator_replacement,
         included_tags=included_tags, excluded_tags=excluded_tags,
         ffmpeg_extra_arguments=ffmpeg_extra_arguments
     )
@@ -410,7 +410,7 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
     output_argument_group.add_argument("-p", "--create-parent-directories", action="store_true", help="Create parent directories for each file")
     # NOTE: uses python str, so it is possible and useful to align track number like "{track:0>2}"
     output_argument_group.add_argument("-o", "--output", type=str, required=True, help="Format string for output files paths")
-    # NOTE: maybe there should be a way to replace so called reserved characters
+    # NOTE: maybe there should be a way to replace so-called reserved characters
     output_argument_group.add_argument("--separator-replacement", type=str, help="Format string for output files paths")
     output_argument_group.add_argument("--dry-run", "--dry", dest="is_dry_run", action="store_true", help="Only print runnable ffmpeg commands")
 
@@ -506,7 +506,7 @@ def main():
         tracks=tracks,
         tags_processors=parsed_arguments.tags_processors,
         output_file_path_format=parsed_arguments.output,
-        output_file_path_separator_replacment=parsed_arguments.separator_replacement,
+        output_file_path_separator_replacement=parsed_arguments.separator_replacement,
         create_parent_directories=parsed_arguments.create_parent_directories,
         included_tags=parsed_arguments.included_tags,
         excluded_tags=parsed_arguments.excluded_tags,
