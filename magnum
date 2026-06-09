@@ -135,7 +135,7 @@ class PathTagsProcessor:
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         file_path_format_match = self.file_path_format.fullmatch(str(file_path))
 
-        return file_path_format_match.groupdict() if file_path_format_match is not None else Tags()
+        return tags | (file_path_format_match.groupdict() if file_path_format_match is not None else Tags())
 
 
 @dataclass
