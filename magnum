@@ -462,15 +462,15 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
         help="executes <executable_path> with <arguments> providing json of current state of tags to stdin")
 
     final_tags_argument_group = output_argument_group.add_mutually_exclusive_group()
-    final_tags_argument_group.add_argument("--included-tags", type=str, nargs="*", help="List of tags should be written in audio files")
-    final_tags_argument_group.add_argument("--excluded-tags", type=str, nargs="*", help="List of tags should NOT be written in audio files")
+    final_tags_argument_group.add_argument("--included-tags", type=str, nargs="*", help="list of tags should be written in audio files")
+    final_tags_argument_group.add_argument("--excluded-tags", type=str, nargs="*", help="list of tags should NOT be written in audio files")
 
     ffmpeg_argument_group = argument_parser.add_argument_group("ffmpeg")
-    ffmpeg_argument_group.add_argument("--ffmpeg-executable-path", "--ffmpeg", type=Path, help="Path to ffmpeg executable", default=ffmpeg_path)
-    ffmpeg_argument_group.add_argument("--ffprobe-executable-path", "--ffprobe", type=Path, help="Path to ffprobe executable", default=ffprobe_path)
-    ffmpeg_argument_group.add_argument("--ffmpeg-extra-arguments", type=split_shell_arguments, help="Additional options that will be passed to ffmpeg")
-    ffmpeg_argument_group.add_argument("-y", action="append_const", const="-y", dest="ffmpeg_extra_arguments", help="Adds \"-y\" option to ffmpeg run")
-    ffmpeg_argument_group.add_argument("--ffmpeg-codec-copy", action=ExtendConstAction, const=["-codec", "copy"], dest="ffmpeg_extra_arguments", help="Adds \"-codec copy\" options to ffmpeg run")
+    ffmpeg_argument_group.add_argument("--ffmpeg-executable-path", "--ffmpeg", type=Path, help="path to ffmpeg executable", default=ffmpeg_path)
+    ffmpeg_argument_group.add_argument("--ffprobe-executable-path", "--ffprobe", type=Path, help="path to ffprobe executable", default=ffprobe_path)
+    ffmpeg_argument_group.add_argument("--ffmpeg-extra-arguments", type=split_shell_arguments, help="additional options that will be passed to ffmpeg")
+    ffmpeg_argument_group.add_argument("-y", action="append_const", const="-y", dest="ffmpeg_extra_arguments", help="add \"-y\" option to ffmpeg run")
+    ffmpeg_argument_group.add_argument("--ffmpeg-codec-copy", action=ExtendConstAction, const=["-codec", "copy"], dest="ffmpeg_extra_arguments", help="add \"-codec copy\" options to ffmpeg run")
 
     return argument_parser
 
