@@ -214,12 +214,12 @@ class RegexOverriderTagsProcessor:
     
     def process_tag(self, tag_name: str, tag_value: str) -> tuple[str, str]:
         if self.overridable_tag_name_regex.fullmatch(tag_name) is None:
-            return (tag_name, tag_value)
+            return tag_name, tag_value
         
         if (tag_value_match := self.overridable_tag_value_regex.fullmatch(tag_value)) is None:
-            return (tag_name, tag_value)
+            return tag_name, tag_value
         
-        return (tag_name, tag_value_match.expand(self.tag_value_template))
+        return tag_name, tag_value_match.expand(self.tag_value_template)
     
     
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
@@ -238,9 +238,9 @@ class RegexReplacerTagsProcessor:
     
     def process_tag(self, tag_name: str, tag_value: str) -> tuple[str, str]:
         if self.overridable_tag_name_regex.fullmatch(tag_name) is None:
-            return (tag_name, tag_value)
+            return tag_name, tag_value
         
-        return (tag_name, self.replaceable_substr_regex.sub(self.replacement, tag_value))
+        return tag_name, self.replaceable_substr_regex.sub(self.replacement, tag_value)
     
     
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
