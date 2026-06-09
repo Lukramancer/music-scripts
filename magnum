@@ -138,28 +138,37 @@ class PathTagsProcessor:
         return tags | (file_path_format_match.groupdict() if file_path_format_match is not None else Tags())
 
 
+class TagWiseTagsProcessor(AbstractBaseClass):
+    @abstract_method
+    def process_tag(self, tag_name: str, tag_value: str) -> Optional[tuple[str, str]]:
+        ...
+
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
+        return dict(filter(lambda tag: tag is not None, starmap(self.process_tag, tags.items())))
+
+
 @dataclass
-class EraserTagsProcessor:
+class EraserTagsProcessor(TagWiseTagsProcessor):
     erasable_tag: str
 
     @classmethod
     def get_parsing_action(cls):
         return AppendMultiValueTypeActionFactory.create_from_class(cls, [str])
 
-    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return {tag_name: tag_value for tag_name, tag_value in tags.items() if tag_name != self.erasable_tag}
+    def process_tag(self, tag_name: str, tag_value: str) -> Optional[tuple[str, str]]:
+        return None if tag_name == self.erasable_tag else (tag_name, tag_value)
 
 
 @dataclass
-class EraserRegexTagsProcessor:
+class EraserRegexTagsProcessor(TagWiseTagsProcessor):
     erasable_tag_pattern: Pattern
 
     @classmethod
     def get_parsing_action(cls):
         return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex])
 
-    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return {tag_name: tag_value for tag_name, tag_value in tags.items() if self.erasable_tag_pattern.fullmatch(tag_name) is None}
+    def process_tag(self, tag_name: str, tag_value: str) -> Optional[tuple[str, str]]:
+        return None if self.erasable_tag_pattern.fullmatch(tag_name) is not None else (tag_value, tag_value)
 
 
 @dataclass
@@ -190,7 +199,7 @@ class FillerTagsProcessor:
 
 
 @dataclass
-class OverriderTagsProcessor:
+class OverriderTagsProcessor(TagWiseTagsProcessor):
     overridable_tag: str
     overridable_tag_value: str
 
@@ -198,12 +207,12 @@ class OverriderTagsProcessor:
     def get_parsing_action(cls):
         return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
 
-    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return (tags | {self.overridable_tag: self.overridable_tag_value}) if self.overridable_tag in tags else tags
+    def process_tag(self, tag_name: str, tag_value: str) -> Optional[tuple[str, str]]:
+        return tag_name, (self.overridable_tag_value if tag_name == self.overridable_tag else tag_value)
 
 
 @dataclass
-class RegexOverriderTagsProcessor:
+class RegexOverriderTagsProcessor(TagWiseTagsProcessor):
     overridable_tag_name_regex: Pattern
     overridable_tag_value_regex: Pattern
     tag_value_template: str
@@ -220,14 +229,11 @@ class RegexOverriderTagsProcessor:
             return tag_name, tag_value
         
         return tag_name, tag_value_match.expand(self.tag_value_template)
-    
-    
-    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return dict(starmap(self.process_tag, tags.items()))
+
 
 
 @dataclass
-class RegexReplacerTagsProcessor:
+class RegexReplacerTagsProcessor(TagWiseTagsProcessor):
     overridable_tag_name_regex: Pattern
     replaceable_substr_regex: Pattern
     replacement: str
@@ -241,14 +247,10 @@ class RegexReplacerTagsProcessor:
             return tag_name, tag_value
         
         return tag_name, self.replaceable_substr_regex.sub(self.replacement, tag_value)
-    
-    
-    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return dict(starmap(self.process_tag, tags.items()))
 
 
 @dataclass
-class RenameTagTagsProcessor:
+class RenameTagTagsProcessor(TagWiseTagsProcessor):
     renameable_tag: str
     new_tag: str
 
@@ -256,12 +258,12 @@ class RenameTagTagsProcessor:
     def get_parsing_action(cls):
         return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
 
-    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return {(self.new_tag if tag == self.renameable_tag else tag): tag_value for tag, tag_value in tags.items()}
+    def process_tag(self, tag_name: str, tag_value: str) -> tuple[str, str]:
+        return (self.new_tag if tag_name == self.renameable_tag else tag_name), tag_value
 
 
 @dataclass
-class RenameTagRegexTagsProcessor:
+class RenameTagRegexTagsProcessor(TagWiseTagsProcessor):
     renameable_tag_pattern: Pattern
     new_tag_template: str
 
@@ -269,10 +271,13 @@ class RenameTagRegexTagsProcessor:
     def get_parsing_action(cls):
         return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex, str])
 
-    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return {(m.expand(self.new_tag_template) if (m := self.renameable_tag_pattern.fullmatch(tag)) is not None else tag): tag_value for tag, tag_value in tags.items()}
+    def process_tag(self, tag_name: str, tag_value: str) -> tuple[str, str]:
+        if (tag_name_rename_match := self.renameable_tag_pattern.fullmatch(tag_name)) is not None:
+            return tag_name_rename_match.expand(self.new_tag_template), tag_value
+        else:
+            return tag_name, tag_value
 
-    
+
 @dataclass
 class ExternalTagsProcessor:
     executable_path: Path
