@@ -284,7 +284,8 @@ def run_cue_sheet_ffmpeg_extractions(
     output_file_name_formatting: str = "./{artist}/{album}/{number:0>2}. {title}.{file_suffix}",
     create_output_files_parent_directories: bool = True,
     ffmpeg_executable_path: Path = Path("ffmpeg"),
-    extra_ffmpeg_arguments: Optional[list[str | Path]] = None
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None,
+    is_dry_run: Optional[bool] = False
 ):
     ffmpeg_runs_arguments: Iterable[tuple[CueTrack, Path, list[str | Path]]] = get_cue_sheet_ffmpeg_extraction_runs(
         cue_sheet=cue_sheet,
@@ -294,10 +295,13 @@ def run_cue_sheet_ffmpeg_extractions(
     )
 
     for cue_track, output_file_path, ffmpeg_run_arguments in ffmpeg_runs_arguments:
-        if create_output_files_parent_directories:
-            output_file_path.parent.mkdir(parents=True, exist_ok=True)
-
-        run_subprocess(executable=ffmpeg_executable_path, args=ffmpeg_run_arguments)
+        if is_dry_run:
+            print(*ffmpeg_run_arguments)
+        else:
+            if create_output_files_parent_directories:
+                output_file_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            run_subprocess(executable=ffmpeg_executable_path, args=ffmpeg_run_arguments)
 
 
 def parse_cue_sheet_file( cue_sheet_file_path: Path, cue_sheet_file_encoding: str = "utf-8"):
@@ -312,7 +316,8 @@ def perform(
     output_file_name_formatting: str = "./{artist}/{album}/{number:02}. {title}.{file_suffix}",
     create_output_files_parent_directories: bool = True,
     ffmpeg_executable_path: Path = Path("ffmpeg"),
-    extra_ffmpeg_arguments: Optional[list[str | Path]] = None
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None,
+    is_dry_run: Optional[bool] = False
 ):
     cue_sheet = parse_cue_sheet_file(
         cue_sheet_file_path=cue_sheet_file_path,
@@ -325,7 +330,8 @@ def perform(
         output_file_name_formatting=output_file_name_formatting,
         create_output_files_parent_directories=create_output_files_parent_directories,
         ffmpeg_executable_path=ffmpeg_executable_path,
-        extra_ffmpeg_arguments=extra_ffmpeg_arguments
+        extra_ffmpeg_arguments=extra_ffmpeg_arguments,
+        is_dry_run=is_dry_run
     )
 
 
@@ -346,6 +352,8 @@ def create_argument_parser() -> ArgumentParser:
 
     arguments_parser.add_argument("--ffmpeg-codec-copy", const=["-c", "copy"], action="store_const", dest="extra_ffmpeg_arguments", help="Add \"-c copy\" arguments to ffmpeg run")
     arguments_parser.add_argument("--extra-ffmpeg-arguments", nargs=REMAINDER, default=[], action="extend", type=str, help="Extra arguments passed to ffmpeg during lyrics integration", required=False)
+
+    arguments_parser.add_argument("--dry", action="store_true", default=False, help="Print ffmpeg commands instead of running", dest="is_dry_run")
 
     return arguments_parser
 
