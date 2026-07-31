@@ -144,7 +144,7 @@ class TagWiseTagsProcessor(AbstractBaseClass):
         ...
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
-        return dict(filter(lambda tag: tag is not None, starmap(self.process_tag, tags.items())))
+        return {new_tag[0]: new_tag[1] for tag_name, tag_value in tags.items() if (new_tag := self.process_tag(tag_name, tag_value)) is not None}
 
 
 @dataclass
