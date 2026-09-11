@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 
-from itertools import starmap
-from re import Pattern, compile as compile_regex
-from subprocess import run as run_subprocess
-from typing import Callable, Optional, Iterable, Any, Unpack, override
-from pathlib import Path
+from abc import ABC as AbstractBaseClass
+from abc import abstractmethod as abstract_method
+from argparse import Action, ArgumentParser, Namespace
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from json import dumps as serialize_json_to_str, loads as deserialize_json_from_str
-from argparse import ArgumentParser, Namespace, Action
-from abc import ABC as AbstractBaseClass, abstractmethod as abstract_method
-from shlex import split as split_shell_arguments
+from itertools import starmap
+from json import dumps as serialize_json_to_str
+from json import loads as deserialize_json_from_str
 from os.path import sep as path_separator
-
+from pathlib import Path
+from re import Pattern
+from re import compile as compile_regex
+from shlex import split as split_shell_arguments
+from subprocess import run as run_subprocess
+from typing import Any, Optional, Unpack, override
 
 Tags = dict[str, str]
 
