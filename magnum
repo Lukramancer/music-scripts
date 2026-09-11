@@ -5,7 +5,6 @@ from abc import abstractmethod as abstract_method
 from argparse import Action, ArgumentParser, Namespace
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from itertools import starmap
 from json import dumps as serialize_json_to_str
 from json import loads as deserialize_json_from_str
 from os.path import sep as path_separator
@@ -107,7 +106,7 @@ class AppendMultiValueTypeActionFactory[T, FactoryArgumentsPack]:
         elif isinstance(values, str):
             values = [values]
 
-        value = self.FACTORY(*starmap(lambda type_function, value: type_function(value), zip(self.TYPES, values)))
+        value = self.FACTORY(*map(lambda type_function, value: type_function(value), self.TYPES, values))
 
         items = getattr(namespace, self.dest, None)
 
