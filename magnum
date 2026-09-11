@@ -448,7 +448,7 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
         help="only print runnable ffmpeg commands")
 
     tags_processors_argument_group = argument_parser.add_argument_group("tags processing")
-    tags_processors_argument_group.set_defaults(tags_processors=list())
+    tags_processors_argument_group.set_defaults(tags_processors=list[TagsProcessor]())
     tags_processors_argument_group.add_argument(
         "--infer-from-path",
         action=PathTagsProcessor.get_parsing_action(), dest="tags_processors",
