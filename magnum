@@ -12,6 +12,7 @@ from pathlib import Path
 from re import Pattern
 from re import compile as compile_regex
 from shlex import split as split_shell_arguments
+from subprocess import DEVNULL
 from subprocess import run as run_subprocess
 from typing import Any, Optional, Unpack, override
 
@@ -418,7 +419,7 @@ def process(
             executable=ffmpeg_executable_path,
             args=run_arguments,
             capture_output=False,
-            # stdin=bytes()
+            stdin=DEVNULL
         )
 
 
