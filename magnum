@@ -549,7 +549,6 @@ def extract_file_tracks_from_parsed_arguments(parsed_arguments: Namespace) -> It
 
 
 def main():
-    from sys import stderr
     from shutil import which
 
     ffmpeg_path_str, ffprobe_path_str = which("ffmpeg"), which("ffprobe")
