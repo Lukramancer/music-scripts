@@ -81,7 +81,7 @@ class ExtendConstAction(Action):
 
 class AppendMultiValueTypeActionFactory[T, *FactoryArgumentsPack]:
     @classmethod
-    def create(cls, base_name: str, types: tuple[Callable[[str], Any], ...], factory: Callable[[*FactoryArgumentsPack], T]):
+    def create(cls, base_name: str, types: tuple[Callable[[str], Any], ...], factory: Callable[[*FactoryArgumentsPack], T]) -> type[Action]:
         return type(base_name + "ParseAction", (Action, ), {
             "__init__": cls.__init,
             "__call__": cls.__parse,
@@ -90,7 +90,7 @@ class AppendMultiValueTypeActionFactory[T, *FactoryArgumentsPack]:
         })
 
     @classmethod
-    def create_from_class(cls, class_cls, types: tuple[Callable[[str], Any], ...]):
+    def create_from_class(cls, class_cls, types: tuple[Callable[[str], Any], ...]) -> type[Action]:
         return cls.create(class_cls.__name__, types, class_cls)
 
     @staticmethod
