@@ -94,22 +94,22 @@ class AppendMultiValueTypeActionFactory[T, FactoryArgumentsPack]:
         return cls.create(class_cls.__name__, types, class_cls)
 
     @staticmethod
-    def __init(self, option_strings, dest, nargs=None, const=None, default=None, required=False, help=None, metavar=None):
+    def __init(pseudo_self, option_strings, dest, nargs=None, const=None, default=None, required=False, help=None, metavar=None):
         if nargs is not None:
             raise ValueError("nargs should not be specified")
 
-        Action.__init__(self, option_strings=option_strings, dest=dest, nargs=len(self.TYPES), const=const, default=default, required=required, help=help, metavar=metavar)
+        Action.__init__(pseudo_self, option_strings=option_strings, dest=dest, nargs=len(pseudo_self.TYPES), const=const, default=default, required=required, help=help, metavar=metavar)
 
     @staticmethod
-    def __parse(self, parser, namespace, values, option_string=None):
+    def __parse(pseudo_self, parser, namespace, values, option_string=None):
         if values is None:
             values = []
         elif isinstance(values, str):
             values = [values]
 
-        value = self.FACTORY(*map(lambda type_function, value: type_function(value), self.TYPES, values))
+        value = pseudo_self.FACTORY(*map(lambda type_function, value: type_function(value), pseudo_self.TYPES, values))
 
-        items = getattr(namespace, self.dest, None)
+        items = getattr(namespace, pseudo_self.dest, None)
 
         if items is None:
             items = []
@@ -120,7 +120,7 @@ class AppendMultiValueTypeActionFactory[T, FactoryArgumentsPack]:
             items = copy.copy(items)
 
         items.append(value)
-        setattr(namespace, self.dest, items)
+        setattr(namespace, pseudo_self.dest, items)
 
 
 class TagsProcessor(Protocol):
