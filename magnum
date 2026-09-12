@@ -14,7 +14,7 @@ from re import compile as compile_regex
 from shlex import split as split_shell_arguments
 from subprocess import DEVNULL
 from subprocess import run as run_subprocess
-from typing import Any, Optional, Protocol, Unpack, override
+from typing import Any, Optional, Protocol, override
 
 Tags = dict[str, str]
 
@@ -79,9 +79,9 @@ class ExtendConstAction(Action):
         setattr(namespace, self.dest, items)
 
 
-class AppendMultiValueTypeActionFactory[T, FactoryArgumentsPack]:
+class AppendMultiValueTypeActionFactory[T, *FactoryArgumentsPack]:
     @classmethod
-    def create(cls, base_name: str, types: Iterable[Callable[[str], Any]], factory: Callable[[Unpack[FactoryArgumentsPack]], T]):
+    def create(cls, base_name: str, types: tuple[Callable[[str], Any], ...], factory: Callable[[*FactoryArgumentsPack], T]):
         return type(base_name + "ParseAction", (Action, ), {
             "__init__": cls.__init,
             "__call__": cls.__parse,
@@ -90,7 +90,7 @@ class AppendMultiValueTypeActionFactory[T, FactoryArgumentsPack]:
         })
 
     @classmethod
-    def create_from_class(cls, class_cls, types: Iterable[Callable[[str], Any]]):
+    def create_from_class(cls, class_cls, types: tuple[Callable[[str], Any], ...]):
         return cls.create(class_cls.__name__, types, class_cls)
 
     @staticmethod
