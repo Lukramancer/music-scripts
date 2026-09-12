@@ -134,7 +134,7 @@ class PathTagsProcessor:
 
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (compile_regex,))
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         file_path_format_match = self.file_path_format.fullmatch(str(file_path))
@@ -157,7 +157,7 @@ class EraserTagsProcessor(TagWiseTagsProcessor):
 
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [str])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (str,))
 
     @override
     def process_tag(self, tag_name: str, tag_value: str) -> Optional[tuple[str, str]]:
@@ -170,7 +170,7 @@ class EraserRegexTagsProcessor(TagWiseTagsProcessor):
 
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (compile_regex,))
 
     @override
     def process_tag(self, tag_name: str, tag_value: str) -> Optional[tuple[str, str]]:
@@ -184,7 +184,7 @@ class WriterTagsProcessor:
 
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (str, str))
 
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
@@ -198,7 +198,7 @@ class FillerTagsProcessor:
 
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (str, str))
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
         return ({self.fillable_tag: self.fillable_tag_value} | tags) if self.fillable_tag not in tags else tags
@@ -211,7 +211,7 @@ class OverriderTagsProcessor(TagWiseTagsProcessor):
 
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (str, str))
 
     @override
     def process_tag(self, tag_name: str, tag_value: str) -> Optional[tuple[str, str]]:
@@ -226,7 +226,7 @@ class RegexOverriderTagsProcessor(TagWiseTagsProcessor):
     
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex, compile_regex, str])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (compile_regex, compile_regex, str))
 
     @override
     def process_tag(self, tag_name: str, tag_value: str) -> tuple[str, str]:
@@ -248,7 +248,7 @@ class RegexReplacerTagsProcessor(TagWiseTagsProcessor):
     
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex, compile_regex, str])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (compile_regex, compile_regex, str))
 
     @override
     def process_tag(self, tag_name: str, tag_value: str) -> tuple[str, str]:
@@ -265,7 +265,7 @@ class RenameTagTagsProcessor(TagWiseTagsProcessor):
 
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [str, str])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (str, str))
 
     @override
     def process_tag(self, tag_name: str, tag_value: str) -> tuple[str, str]:
@@ -279,7 +279,7 @@ class RenameTagRegexTagsProcessor(TagWiseTagsProcessor):
 
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [compile_regex, str])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (compile_regex, str))
 
     @override
     def process_tag(self, tag_name: str, tag_value: str) -> tuple[str, str]:
@@ -296,7 +296,7 @@ class ExternalTagsProcessor:
 
     @classmethod
     def get_parsing_action(cls):
-        return AppendMultiValueTypeActionFactory.create_from_class(cls, [Path, str])
+        return AppendMultiValueTypeActionFactory.create_from_class(cls, (Path, str))
 
 
     def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
