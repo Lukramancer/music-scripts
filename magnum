@@ -14,7 +14,7 @@ from re import compile as compile_regex
 from shlex import split as split_shell_arguments
 from subprocess import DEVNULL
 from subprocess import run as run_subprocess
-from typing import Any, Optional, Unpack, override
+from typing import Any, Optional, Protocol, Unpack, override
 
 Tags = dict[str, str]
 
@@ -123,9 +123,10 @@ class AppendMultiValueTypeActionFactory[T, FactoryArgumentsPack]:
         setattr(namespace, self.dest, items)
 
 
-# Tags processor is anything callable, which takes dict of tags with their values,
-# Path of source file and float duration in seconds
-TagsProcessor = Callable[[Tags, Path, float], Tags]
+class TagsProcessor(Protocol):
+    def __call__(self, tags: Tags, file_path: Path, duration: float) -> Tags:
+        ...
+
 
 @dataclass
 class PathTagsProcessor:
