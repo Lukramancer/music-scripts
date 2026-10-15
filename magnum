@@ -4,6 +4,7 @@ from abc import ABC as AbstractBaseClass
 from abc import abstractmethod as abstract_method
 from argparse import Action, ArgumentParser, Namespace
 from collections.abc import Callable, Iterable
+from csv import DictReader as TableDictReader
 from dataclasses import dataclass
 from json import dumps as serialize_json_to_str
 from json import loads as deserialize_json_from_str
@@ -533,10 +534,31 @@ def process(
         )
 
 
+@dataclass
+class TracksTable:
+    file_path: Path | int
+    delimiter: str
+
+    @classmethod
+    def get_file_path(cls, string: str) -> Path | int:
+        return 0 if string == "-" else Path(string)
+
+    @classmethod
+    def factory(cls, delimiter: str) -> Callable[[str], Self]:
+        return lambda file_path: cls(cls.get_file_path(file_path), delimiter)
+    
+
 def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Optional[Path] = None) -> ArgumentParser:
     argument_parser = ArgumentParser()
 
-    argument_parser.add_argument("file_tracks_paths", type=Path, nargs="*", help="processable files paths")
+    input_argument_group = argument_parser.add_argument_group("input")
+    input_argument_group.add_argument("file_tracks_paths", type=Path, nargs="*", help="processable files paths")
+    input_argument_group.add_argument("--file-slice-tracks-tsv",
+        nargs="*", type=TracksTable.factory("\t"), action="extend", dest="file_slice_tracks_tables",
+        help="paths to TSV files (or - for stdin) with slices of tracks")
+    input_argument_group.add_argument("--file-slice-tracks-csv",
+        nargs="*", type=TracksTable.factory(","), action="extend", dest="file_slice_tracks_tables",
+        help="paths to CSV files (or - for stdin) with slices of tracks")
 
     output_argument_group = argument_parser.add_argument_group("output")
     output_argument_group.add_argument(
@@ -647,16 +669,57 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
     return argument_parser
 
 
-def extract_file_tracks_from_parsed_arguments(parsed_arguments: Namespace) -> Iterable[FileTrack]:
+def extract_tracks_from_parsed_arguments(parsed_arguments: Namespace) -> Iterable[Track]:
+    tracks = list[Track]()
+    
     ffprobe_path: Optional[Path] = parsed_arguments.ffprobe_executable_path
 
     file_tracks_paths: Optional[list[Path]] = parsed_arguments.file_tracks_paths
     if ffprobe_path is not None and file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
-        return [FileTrack.from_path(file_track_path, ffprobe_path) for file_track_path in file_tracks_paths]
+        tracks.extend(FileTrack.from_path(file_track_path, ffprobe_path) for file_track_path in file_tracks_paths)
     elif file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
         raise ValueError("ffprobe was not found")
 
-    return []
+    for file_slice_tracks_table in parsed_arguments.file_slice_tracks_tables:
+        with open(file_slice_tracks_table.file_path, mode="rt") as file_slice_tracks_table_file:
+            file_slice_tracks_table_dict_reader = TableDictReader(
+                file_slice_tracks_table_file,
+                delimiter=file_slice_tracks_table.delimiter
+            )
+            
+            for row_number, file_slice_track_info in enumerate(file_slice_tracks_table_dict_reader, start=1):
+                if not isinstance(value := file_slice_track_info.get("start"), str) and value is not None:
+                    raise TypeError(f"column \"start\" was not specified or has incorrect type at row \"{row_number}\" in file \"{file_slice_tracks_table.file_path}\"")
+                start = value if value is not None and len(value) > 0 else None
+                
+                if not isinstance(value := file_slice_track_info.get("end"), str) and value is not None:
+                    raise TypeError(f"column \"end\" was not specified or has incorrect type at row \"{row_number}\" in file \"{file_slice_tracks_table.file_path}\"")
+                end = value if value is not None and len(value) > 0 else None
+
+                used_columns_names = ["start", "end"]
+
+                for file_path_column_name in ["file", "path", "file_path"]:
+                    if isinstance(file_path_str := file_slice_track_info.get(file_path_column_name), str) and len(file_path_str) > 0:
+                        used_columns_names.append(file_path_column_name)
+                        break
+                else:
+                    raise TypeError(f"column \"path\" was not specified or has incorrect type at row \"{row_number}\" in file \"{file_slice_tracks_table.file_path}\"")
+
+                tracks.append(FileSliceTrack(
+                    ffprobe_path=ffprobe_path,
+                    file_path=Path(file_path_str),
+                    start=FfmpegTimestamp.from_string(start) if start is not None else None,
+                    end=FfmpegTimestamp.from_string(end) if end is not None else None,
+                    tags={
+                    column_name: column_value
+                        for column_name, column_value in file_slice_track_info.items()
+                        if column_name not in used_columns_names and \
+                            isinstance(column_name, str) and \
+                            isinstance(column_value, str) and len(column_value) > 0
+                    }
+                ))
+
+    return tracks
 
 
 def main():
@@ -669,9 +732,7 @@ def main():
     argument_parser = create_argument_parser(ffmpeg_path, ffprobe_path)
     parsed_arguments = argument_parser.parse_args()
 
-    tracks: list[Track] = list[Track]()
-
-    tracks.extend(extract_file_tracks_from_parsed_arguments(parsed_arguments))
+    tracks: list[Track] = list(extract_tracks_from_parsed_arguments(parsed_arguments))
 
     process(
         tracks=tracks,
