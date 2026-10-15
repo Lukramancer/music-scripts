@@ -38,9 +38,11 @@ class FileTrack(Track):
     def from_path(cls, file_track_path: Path, ffprobe_path: Path):
         return cls(file_track_path, ffprobe_path)
 
+    @override
     def get_ffmpeg_extraction_arguments(self) -> list[str | Path]:
         return ["-i", self.file_path]
 
+    @override
     def get_initial_info(self) -> tuple[Tags, float, Path]:
         ffprobe_arguments: list[str | Path] = ["ffprobe", "-loglevel", "quiet", "-show_format", "-of", "json"]
         ffprobe_arguments.extend(self.get_ffmpeg_extraction_arguments())
