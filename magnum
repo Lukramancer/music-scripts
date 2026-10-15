@@ -418,7 +418,7 @@ class ExternalTagsProcessor:
             executable=self.executable_path,
             args=arguments,
             text=True,
-            input=serialize_json_to_str({"filename": str(file_path), "duration": duration, "tags": tags}),
+            input=serialize_json_to_str({"path": str(file_path), "duration": duration, "tags": tags}),
             capture_output=True
         )
 
