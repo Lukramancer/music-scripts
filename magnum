@@ -14,7 +14,7 @@ from re import compile as compile_regex
 from shlex import split as split_shell_arguments
 from subprocess import DEVNULL
 from subprocess import run as run_subprocess
-from typing import Any, Optional, Protocol, override
+from typing import Any, Optional, Protocol, Self, override
 
 Tags = dict[str, str]
 
@@ -57,6 +57,113 @@ class FileTrack(Track):
         file_info = deserialize_json_from_str(ffprobe_run.stdout)["format"]
 
         return file_info["tags"], float(file_info["duration"]), Path(file_info["filename"])
+
+
+@dataclass
+class FfmpegTimestamp:
+    milliseconds: int
+
+    @classmethod
+    def from_string(cls, string: str) -> Self:
+        if string.__contains__("."):
+            components, milliseconds_str = string.split(".", maxsplit=1)
+            
+            milliseconds = int(milliseconds_str.ljust(3, "0")[:3])
+        else:
+            components = string
+            milliseconds = 0
+
+        current_component_milliseconds_amount = 1000
+        for component_str in reversed(components.split(":")):
+            milliseconds += int(component_str) * current_component_milliseconds_amount
+            current_component_milliseconds_amount *= 60
+
+        return cls(milliseconds)
+
+    def __str__(self) -> str:
+        seconds = abs(self.milliseconds) // 1000
+        milliseconds = abs(self.milliseconds) % 1000
+        
+        return f"{'-' if self.milliseconds < 0 else ''}{seconds}.{milliseconds:03d}"
+
+    def __float__(self) -> float:
+        return float(self.milliseconds / 1000)
+
+    def __sub__(self, other: Self) -> Self:
+        return type(self)(self.milliseconds - other.milliseconds)
+
+
+@dataclass
+class FileSliceTrack(Track):
+    ffprobe_path: Optional[str | Path]
+    
+    file_path: Path
+    start: Optional[FfmpegTimestamp]
+    end: Optional[FfmpegTimestamp]
+    tags: Tags
+
+    @override
+    def get_ffmpeg_extraction_arguments(self) -> list[str | Path]:
+        extraction_arguments: list[str | Path] = ["-i", self.file_path]
+
+        if self.start is not None:
+            extraction_arguments.extend(("-ss", str(self.start)))
+
+        if self.end is not None:
+            extraction_arguments.extend(("-to", str(self.end)))
+        
+        return extraction_arguments
+
+    def get_whole_file_duration_in_seconds(self) -> float:
+        ffprobe_arguments: list[str | Path] = [
+            "ffprobe",
+            "-loglevel", "quiet",
+            "-show_format", "-of", "json",
+            "-i", self.file_path
+        ]
+
+        ffprobe_run = run_subprocess(
+            executable=self.ffprobe_path,
+            args=ffprobe_arguments,
+            capture_output=True,
+            text=True
+        )
+
+        file_info = deserialize_json_from_str(ffprobe_run.stdout)["format"]
+        return float(file_info["duration"])
+
+    def get_duration_in_seconds(self) -> float:
+        if self.start is not None and self.end is not None:
+            return float(self.end - self.start)
+        elif self.start is None and self.end is not None:
+            return float(self.end)
+        elif self.start is not None and self.end is None:
+            return self.get_whole_file_duration_in_seconds() - float(self.start)
+        else:
+            return self.get_whole_file_duration_in_seconds()
+
+    @override
+    def get_initial_info(self) -> tuple[Tags, float, Path]:
+        return self.tags, self.get_duration_in_seconds(), self.file_path
+
+
+@dataclass
+class FileSliceTrackBuilder:
+    ffprobe_path: Optional[str | Path]
+
+    def build(self,
+        file_path: Path,
+        start: Optional[FfmpegTimestamp | str],
+        end: Optional[FfmpegTimestamp | str],
+        tags: Tags
+    ) -> FileSliceTrack:
+        return FileSliceTrack(
+            ffprobe_path=self.ffprobe_path,
+            file_path=file_path,
+            start=FfmpegTimestamp.from_string(start) if isinstance(start, str) else start,
+            end=FfmpegTimestamp.from_string(end) if isinstance(end, str) else end,
+            tags=tags
+        )
 
 
 # NOTE: too niche feature to be in standard library
