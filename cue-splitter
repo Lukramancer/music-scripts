@@ -10,7 +10,7 @@ from itertools import zip_longest
 from pathlib import Path
 from re import compile as compile_regexp
 from subprocess import run as run_subprocess
-from typing import Any, ClassVar, Optional, Self
+from typing import Any, ClassVar, Optional, Self, override
 
 COMMAND_REGEXP = compile_regexp(r"^(?P<indent>\s*)(?P<command_and_arguments>(?P<command>[^\s]+)[^\n]+)$")
 TITLE_COMMAND_REGEX = compile_regexp(r"\s*TITLE\s*\"(?P<title>(?:[^\"]|(?:\\\"))+)\"")
@@ -104,9 +104,11 @@ class CueTrack(HierarchyParsable):
 
         return self.file.cd.performer
 
+    @override
     def get_upper(self) -> HierarchyParsable:
         return self.file
 
+    @override
     def parse_command(self, command: str) -> Self:
         if (title_command_match := TITLE_COMMAND_REGEX.fullmatch(command)) is not None:
             self.title = title_command_match.group("title")
@@ -127,6 +129,7 @@ class CueTrack(HierarchyParsable):
 
         return self
 
+    @override
     def get_meta(self, key: str) -> Optional[str]:
         if key == "title":
             return self.title
@@ -154,9 +157,11 @@ class CueFile(HierarchyParsable):
     tracks: list[CueTrack] = dataclass_field(default_factory=list)
     rems_meta: dict[str, str] = dataclass_field(default_factory=dict)
 
+    @override
     def get_upper(self) -> HierarchyParsable:
         return self.sheet
 
+    @override
     def parse_command(self, command: str) -> HierarchyParsable:
         if (track_command_match := TRACK_COMMAND_REGEX.fullmatch(command)) is not None:
             self.tracks.append(CueTrack(
@@ -173,6 +178,7 @@ class CueFile(HierarchyParsable):
     def get_tracks(self) -> Iterable[CueTrack]:
         return self.tracks
 
+    @override
     def get_meta(self, key: str) -> Optional[str]:
         return self.rems_meta.get(key)
 
@@ -186,9 +192,11 @@ class CueSheet(HierarchyParsable):
 
     IGNORED_COMMANDS: ClassVar[list[str]] = ["CATALOG"]
 
+    @override
     def get_upper(self) -> Optional[Self]:
         return None
 
+    @override
     def parse_command(self, command: str) -> HierarchyParsable:
         if (title_command_match := TITLE_COMMAND_REGEX.fullmatch(command)) is not None:
             self.title = title_command_match.group("title")
@@ -219,6 +227,7 @@ class CueSheet(HierarchyParsable):
         for file in self.files:
             yield from file.get_tracks()
 
+    @override
     def get_meta(self, key: str) -> Optional[str]:
         if key == "title":
             return self.title
