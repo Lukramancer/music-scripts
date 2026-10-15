@@ -148,25 +148,6 @@ class FileSliceTrack(Track):
         return self.tags, self.get_duration_in_seconds(), self.file_path
 
 
-@dataclass
-class FileSliceTrackBuilder:
-    ffprobe_path: Optional[str | Path]
-
-    def build(self,
-        file_path: Path,
-        start: Optional[FfmpegTimestamp | str],
-        end: Optional[FfmpegTimestamp | str],
-        tags: Tags
-    ) -> FileSliceTrack:
-        return FileSliceTrack(
-            ffprobe_path=self.ffprobe_path,
-            file_path=file_path,
-            start=FfmpegTimestamp.from_string(start) if isinstance(start, str) else start,
-            end=FfmpegTimestamp.from_string(end) if isinstance(end, str) else end,
-            tags=tags
-        )
-
-
 # NOTE: too niche feature to be in standard library
 # https://github.com/python/cpython/issues/87326#issuecomment-2380079188
 class ExtendConstAction(Action):
