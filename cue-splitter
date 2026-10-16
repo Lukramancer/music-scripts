@@ -122,7 +122,7 @@ class CueTrack(HierarchyParsable):
         elif (rem_key_value_match := REM_KEY_VALUE_COMMAND_REGEX.fullmatch(command)) is not None:
             self.rems_meta[rem_key_value_match.group("key")] = rem_key_value_match.group("value")
             return self
-        elif any(map(lambda command_name: command.lstrip().startswith(command_name), self.IGNORED_COMMANDS)):
+        elif any(command.lstrip().startswith(command_name) for command_name in self.IGNORED_COMMANDS):
             return self
         else:
             raise HierarchyParsable.UnsupportedCommandError()
@@ -214,7 +214,7 @@ class CueSheet(HierarchyParsable):
         elif (rem_key_value_match := REM_KEY_VALUE_COMMAND_REGEX.fullmatch(command)) is not None:
             self.rems_meta[rem_key_value_match.group("key")] = rem_key_value_match.group("value")
             return self
-        elif any(map(lambda command_name: command.startswith(command_name), self.IGNORED_COMMANDS)):
+        elif any(command.startswith(command_name) for command_name in self.IGNORED_COMMANDS):
             return self
         else:
             raise HierarchyParsable.UnsupportedCommandError()
