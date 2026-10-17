@@ -315,7 +315,7 @@ def run_cue_sheet_ffmpeg_extractions(
             run_subprocess(executable=ffmpeg_executable_path, args=ffmpeg_run_arguments)
 
 
-def parse_cue_sheet_file( cue_sheet_file_path: Path, cue_sheet_file_encoding: str = "utf-8"):
+def parse_cue_sheet_file(cue_sheet_file_path: Path, cue_sheet_file_encoding: Optional[str] = "utf-8"):
     with open(cue_sheet_file_path, mode="rt", encoding=cue_sheet_file_encoding) as cue_sheet_file:
         return CueSheet.parse_commands(map(str.rstrip, cue_sheet_file))
 
