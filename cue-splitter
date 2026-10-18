@@ -27,7 +27,7 @@ REM_KEY_VALUE_COMMAND_REGEX = compile_regexp(r"\s*REM\s+(?P<key>\w+)\s+(?P<quote
 
 
 class HierarchyParsable(AbstractBaseClass):
-    class UnsupportedCommandError (Exception):
+    class UnsupportedCommandError (ValueError):
         ...
 
     @abstract_method
@@ -51,7 +51,7 @@ class HierarchyParsable(AbstractBaseClass):
                 else:
                     break
             else:
-                raise ValueError(f"\"{command}\" is not parseable")
+                raise cls.UnsupportedCommandError(f"\"{command}\" is not parseable")
 
         return initial
 
