@@ -250,7 +250,7 @@ TAGS: list[tuple[str, str]] = [
     ("number", "track"),
     ("title", "title"),
     ("isrc", "isrc"),
-    ("GENRE", "genres"),
+    ("GENRE", "genre"),
     ("DATE", "date"),
     ("COMMENT", "comment")
 ]
