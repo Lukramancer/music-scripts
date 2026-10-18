@@ -269,9 +269,25 @@ def get_cue_tracks_with_timings(cue_sheet: CueSheet) -> Iterator[TimedTrack]:
         last_cue_track.get_start_position().to_time_specifier(), None
 
 
-def parse_cue_sheet_file(cue_sheet_file_path: Path, cue_sheet_file_encoding: Optional[str] = "utf-8"):
-    with open(cue_sheet_file_path, mode="rt", encoding=cue_sheet_file_encoding) as cue_sheet_file:
-        return CueSheet.parse_commands(map(str.rstrip, cue_sheet_file))
+class FileParsingException(Exception):
+    def __init__(self, errors: list[UnicodeDecodeError | HierarchyParsable.UnsupportedCommandError]):
+        super().__init__("Could not parse CUE sheet file, errors occured")
+        self.parsing_erros = errors
+
+
+def parse_cue_sheet_file(cue_sheet_file_path: Path, cue_sheet_file_possible_encodings: Optional[Sequence[str]] = None) -> CueSheet:
+    if cue_sheet_file_possible_encodings is None:
+        cue_sheet_file_possible_encodings = ["utf8"]
+
+    parsing_errors: list[UnicodeDecodeError | HierarchyParsable.UnsupportedCommandError] = []
+    for cue_sheet_file_possible_encoding in cue_sheet_file_possible_encodings:
+        try:
+            with open(cue_sheet_file_path, mode="rt", encoding=cue_sheet_file_possible_encoding) as cue_sheet_file:
+                return CueSheet.parse_commands(map(str.rstrip, cue_sheet_file))
+        except (UnicodeDecodeError, HierarchyParsable.UnsupportedCommandError) as error:
+            parsing_errors.append(error)
+    
+    raise FileParsingException(parsing_errors)
 
 
 def extract_tags(track: CueTrack) -> dict[str, str]:
@@ -385,12 +401,12 @@ class TableWriteStrategy:
 
 def perform(
     cue_sheet_file_path: Path,
-    cue_sheet_file_encoding: Optional[str],
+    cue_sheet_file_encodings: Optional[list[str]],
     execution_strategy: ExecutionStrategy
 ):
     cue_sheet = parse_cue_sheet_file(
         cue_sheet_file_path=cue_sheet_file_path,
-        cue_sheet_file_encoding=cue_sheet_file_encoding
+        cue_sheet_file_possible_encodings=cue_sheet_file_encodings
     )
 
     plans = get_cue_tracks_with_timings(cue_sheet)
@@ -415,7 +431,7 @@ def create_argument_parser() -> ArgumentParser:
     )
 
     arguments_parser.add_argument("cue_sheet_file_path", type=Path, help="Path to .cue file")
-    arguments_parser.add_argument("--cue-sheet-file-encoding", "--cue-encoding", type=str, default="utf8", help="Encoding of .cue file")
+    arguments_parser.add_argument("--cue-sheet-file-encodings", "--cue-encodings", type=str, nargs="+", help="Encoding of .cue file")
     arguments_parser.add_argument("--parent-directory-replacement", type=str, required=False, help="Replacement for parent directory")
 
     arguments_parser.add_argument("--output-file-path", "-o", type=str, help="Format of path for output files")
@@ -483,7 +499,7 @@ def main(arguments: Iterable[str] | None = None):
 
     perform(
         cue_sheet_file_path=parsed_arguments.cue_sheet_file_path,
-        cue_sheet_file_encoding=parsed_arguments.cue_sheet_file_encoding,
+        cue_sheet_file_encodings=parsed_arguments.cue_sheet_file_encodings,
         execution_strategy=execution_strategy
     )
 
