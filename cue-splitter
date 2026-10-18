@@ -243,6 +243,7 @@ class CueSheet(HierarchyParsable):
             return self.rems_meta.get(key)
 
 
+# Mapping from meta key in HierarchyParsable into ffmpeg tag key
 TAGS: list[tuple[str, str]] = [
     ("performer", "artist"),
     ("album", "album"),
