@@ -436,7 +436,6 @@ def create_argument_parser() -> ArgumentParser:
 
     arguments_parser.add_argument("cue_sheets_files_paths", type=Path, nargs="+", help="Paths to .cue file")
     arguments_parser.add_argument("--cue-sheets-files-encodings", "--cue-encodings", type=str, nargs="+", help="Encoding of .cue file")
-    arguments_parser.add_argument("--parent-directory-replacement", type=str, required=False, help="Replacement for parent directory")
 
     arguments_parser.add_argument("--output-file-path", "-o", type=str, help="Format of path for output files")
     arguments_parser.add_argument("--create-output-files-parent-directories", "-p", action="store_true", default=False, help="Create parent directories for output files")
