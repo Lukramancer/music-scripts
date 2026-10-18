@@ -9,8 +9,7 @@ from csv import DictWriter as TableDictWriter
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from enum import Enum
-from functools import partial
-from itertools import chain, pairwise, starmap
+from itertools import chain, cycle, pairwise, starmap
 from pathlib import Path
 from re import compile as compile_regexp
 from subprocess import DEVNULL
@@ -302,19 +301,19 @@ def extract_tags(track: CueTrack) -> dict[str, str]:
     return formattings
 
 
-ExecutionStrategy = Callable[[Iterator[TimedTrack]], Any]
+BackTrackedTimedTrack = tuple[*TimedTrack, Path]
+ExecutionStrategy = Callable[[Iterator[BackTrackedTimedTrack]], Any]
 
 
 @dataclass
 class FfmpegCommandBaseStrategy(AbstractBaseClass):
-    parent_directory_path: Path = Path(".")
     output_file_name_formatting: str = "./{artist}/{album}/{track:02}. {title}{file_suffix}"
     extra_ffmpeg_arguments: Optional[list[str | Path]] = None
 
-    def get_ffmpeg_extraction_arguments(self, track: CueTrack, start: str, end: Optional[str]) -> list[str | Path]:
+    def get_ffmpeg_extraction_arguments(self, track: CueTrack, start: str, end: Optional[str], parent_directory_path: Path) -> list[str | Path]:
         ffmpeg_arguments: list[str | Path] = [
             "ffmpeg",
-            "-i", self.parent_directory_path / track.file.path,
+            "-i", parent_directory_path / track.file.path,
             "-ss", start
         ]
 
@@ -339,7 +338,7 @@ class FfmpegCommandBaseStrategy(AbstractBaseClass):
     def on_ffmpeg_extractions_commands(self, ffmpeg_extractions_commands: Iterator[Sequence[str | Path]]):
         ...
     
-    def __call__(self, tracks_with_timings: Iterator[TimedTrack]):
+    def __call__(self, tracks_with_timings: Iterator[BackTrackedTimedTrack]):
         self.on_ffmpeg_extractions_commands(starmap(self.get_ffmpeg_extraction_arguments, tracks_with_timings))
 
 
@@ -373,7 +372,7 @@ class TableWriteStrategy:
     file_path: Path | int
     delimiter: str
 
-    def _write_table(self, tags_set: set[str], tracks_with_timings: Iterable[TimedTrack]):
+    def _write_table(self, tags_set: set[str], tracks_with_timings: Iterable[BackTrackedTimedTrack]):
         with open(self.file_path, mode="wt") as table_file:
             columns_names = ["path", "start", "end"]
             columns_names.extend(tags_set)
@@ -381,9 +380,9 @@ class TableWriteStrategy:
             table_dict_writer = TableDictWriter(table_file, fieldnames=columns_names, delimiter=self.delimiter)
             
             table_dict_writer.writeheader()
-            for track, track_start, track_end in tracks_with_timings:
+            for track, track_start, track_end, parent_directory_path in tracks_with_timings:
                 row = {
-                    "path": track.file.path,
+                    "path": parent_directory_path / track.file.path,
                     "start": track_start,
                     "end": track_end
                 }
@@ -391,9 +390,9 @@ class TableWriteStrategy:
 
                 table_dict_writer.writerow(row)
                 
-    def __call__(self, tracks_with_timings: Iterator[TimedTrack]):
+    def __call__(self, tracks_with_timings: Iterator[BackTrackedTimedTrack]):
         tags_set: set[str] = set[str]()
-        gathered_tracks: list[TimedTrack] = []
+        gathered_tracks: list[BackTrackedTimedTrack] = []
         for track_info in tracks_with_timings:
             tags = extract_tags(track_info[0])
             tags_set.update(tags.keys())
@@ -407,13 +406,18 @@ def perform(
     cue_sheets_files_encodings: Optional[list[str]],
     execution_strategy: ExecutionStrategy
 ):
-    parse_cue_sheet = partial(
-        parse_cue_sheet_file,
-        cue_sheet_file_possible_encodings=cue_sheets_files_encodings
+    parse_cue_sheet: Callable[[Path], tuple[CueSheet, Path]] = lambda cue_sheet_file_path: (
+        parse_cue_sheet_file(cue_sheet_file_path, cue_sheets_files_encodings),
+        cue_sheet_file_path.parent
     )
     cue_sheets = map(parse_cue_sheet, cue_sheets_files_paths)
 
-    plans = chain(*map(get_cue_tracks_with_timings, cue_sheets))
+    _get_cue_tracks_with_timings: Callable[[CueSheet, Path], Iterator[BackTrackedTimedTrack]] = lambda cue_sheet, cue_cheet_path: map(
+        lambda cue_track, cue_track_sheet_file_path: (*cue_track, cue_track_sheet_file_path),
+        get_cue_tracks_with_timings(cue_sheet),
+        cycle([cue_cheet_path])
+    )
+    plans = chain(*starmap(_get_cue_tracks_with_timings, cue_sheets))
 
     execution_strategy(plans)
 
@@ -475,16 +479,12 @@ def main(arguments: Iterable[str] | None = None):
 
     if parsed_arguments.execution_strategy_choice == ExecutionStrategyChoices.DRY:
         execution_strategy = FfmpegCommandDryStrategy(
-            parent_directory_path=parsed_arguments.parent_directory_replacement \
-                if parsed_arguments.parent_directory_replacement is not None else Path.cwd(),
             output_file_name_formatting=parsed_arguments.output_file_path \
                 if parsed_arguments.output_file_path is not None else "./{artist}/{album}/{track:0>2}. {title}{file_suffix}",
             extra_ffmpeg_arguments=parsed_arguments.extra_ffmpeg_arguments
         )
     elif parsed_arguments.execution_strategy_choice == ExecutionStrategyChoices.EXTRACT:
         execution_strategy = FfmpegCommandMultithreadStrategy(
-            parent_directory_path=parsed_arguments.parent_directory_replacement \
-                if parsed_arguments.parent_directory_replacement is not None else Path.cwd(),
             output_file_name_formatting=parsed_arguments.output_file_path \
                 if parsed_arguments.output_file_path is not None else "./{artist}/{album}/{track:0>2}. {title}{file_suffix}",
             extra_ffmpeg_arguments=parsed_arguments.extra_ffmpeg_arguments,
