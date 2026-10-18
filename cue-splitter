@@ -9,7 +9,8 @@ from csv import DictWriter as TableDictWriter
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from enum import Enum
-from itertools import pairwise, starmap
+from functools import partial
+from itertools import chain, pairwise, starmap
 from pathlib import Path
 from re import compile as compile_regexp
 from subprocess import DEVNULL
@@ -149,6 +150,8 @@ class CueTrack(HierarchyParsable):
     def get_tag(self, tag: str) -> Optional[str]:
         if tag.lower() in {"album", "albumtitle", "album_title"}:
             return self.file.get_meta_recursively("title")
+        if tag.lower() in {"album_artist", "albumartist"}:
+            return self.file.get_meta_recursively("performer")
         else:
             return self.get_meta_recursively(tag)
 
@@ -400,16 +403,17 @@ class TableWriteStrategy:
 
 
 def perform(
-    cue_sheet_file_path: Path,
-    cue_sheet_file_encodings: Optional[list[str]],
+    cue_sheets_files_paths: list[Path],
+    cue_sheets_files_encodings: Optional[list[str]],
     execution_strategy: ExecutionStrategy
 ):
-    cue_sheet = parse_cue_sheet_file(
-        cue_sheet_file_path=cue_sheet_file_path,
-        cue_sheet_file_possible_encodings=cue_sheet_file_encodings
+    parse_cue_sheet = partial(
+        parse_cue_sheet_file,
+        cue_sheet_file_possible_encodings=cue_sheets_files_encodings
     )
+    cue_sheets = map(parse_cue_sheet, cue_sheets_files_paths)
 
-    plans = get_cue_tracks_with_timings(cue_sheet)
+    plans = chain(*map(get_cue_tracks_with_timings, cue_sheets))
 
     execution_strategy(plans)
 
@@ -430,8 +434,8 @@ def create_argument_parser() -> ArgumentParser:
         description="Script for extracting tracks by .cue file"
     )
 
-    arguments_parser.add_argument("cue_sheet_file_path", type=Path, help="Path to .cue file")
-    arguments_parser.add_argument("--cue-sheet-file-encodings", "--cue-encodings", type=str, nargs="+", help="Encoding of .cue file")
+    arguments_parser.add_argument("cue_sheets_files_paths", type=Path, nargs="+", help="Paths to .cue file")
+    arguments_parser.add_argument("--cue-sheets-files-encodings", "--cue-encodings", type=str, nargs="+", help="Encoding of .cue file")
     arguments_parser.add_argument("--parent-directory-replacement", type=str, required=False, help="Replacement for parent directory")
 
     arguments_parser.add_argument("--output-file-path", "-o", type=str, help="Format of path for output files")
@@ -498,8 +502,8 @@ def main(arguments: Iterable[str] | None = None):
     
 
     perform(
-        cue_sheet_file_path=parsed_arguments.cue_sheet_file_path,
-        cue_sheet_file_encodings=parsed_arguments.cue_sheet_file_encodings,
+        cue_sheets_files_paths=parsed_arguments.cue_sheets_files_paths,
+        cue_sheets_files_encodings=parsed_arguments.cue_sheets_files_encodings,
         execution_strategy=execution_strategy
     )
 
