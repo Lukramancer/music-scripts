@@ -479,7 +479,7 @@ def main(arguments: Iterable[str] | None = None):
             parent_directory_path=parsed_arguments.parent_directory_replacement \
                 if parsed_arguments.parent_directory_replacement is not None else Path.cwd(),
             output_file_name_formatting=parsed_arguments.output_file_path \
-                if parsed_arguments.output_file_path is not None else "./{artist}/{album}/{track:0>2}. {title}.wav",
+                if parsed_arguments.output_file_path is not None else "./{artist}/{album}/{track:0>2}. {title}{file_suffix}",
             extra_ffmpeg_arguments=parsed_arguments.extra_ffmpeg_arguments
         )
     elif parsed_arguments.execution_strategy_choice == ExecutionStrategyChoices.EXTRACT:
@@ -487,7 +487,7 @@ def main(arguments: Iterable[str] | None = None):
             parent_directory_path=parsed_arguments.parent_directory_replacement \
                 if parsed_arguments.parent_directory_replacement is not None else Path.cwd(),
             output_file_name_formatting=parsed_arguments.output_file_path \
-                if parsed_arguments.output_file_path is not None else "./{artist}/{album}/{track:0>2}. {title}.wav",
+                if parsed_arguments.output_file_path is not None else "./{artist}/{album}/{track:0>2}. {title}{file_suffix}",
             extra_ffmpeg_arguments=parsed_arguments.extra_ffmpeg_arguments,
             ffmpeg_exectuable_path=parsed_arguments.ffmpeg_executable_path,
             max_workers_amount=parsed_arguments.max_ffmpeg_workers
