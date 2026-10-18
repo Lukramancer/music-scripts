@@ -3,7 +3,8 @@
 from abc import ABC as AbstractBaseClass
 from abc import abstractmethod as abstract_method
 from argparse import Action, ArgumentParser, Namespace
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from csv import DictReader as TableDictReader
 from dataclasses import dataclass
 from json import dumps as serialize_json_to_str
@@ -489,7 +490,8 @@ def process(
     excluded_tags: Optional[list[str]] = None,
     ffmpeg_executable_path: Optional[Path] = None,
     ffmpeg_extra_arguments: Optional[list[str | Path]] = None,
-    is_dry_run: bool = False
+    is_dry_run: bool = False,
+    max_ffmpeg_workers_amount: Optional[int] = 1
 ):
     plans = plan(
         tracks=tracks, tags_processors=tags_processors,
@@ -499,20 +501,29 @@ def process(
         ffmpeg_extra_arguments=ffmpeg_extra_arguments
     )
 
-    for output_file_path, run_arguments in plans:
-        if is_dry_run:
+    if is_dry_run:
+        for _output_file_path, run_arguments in plans:
             print(*run_arguments)
-            continue
 
-        if create_parent_directories:
-            output_file_path.parent.mkdir(exist_ok=True, parents=True)
+    run = lambda run_arguments: run_subprocess(
+        executable=ffmpeg_executable_path,
+        args=run_arguments,
+        capture_output=False,
+        stdin=DEVNULL
+    )
 
-        run_subprocess(
-            executable=ffmpeg_executable_path,
-            args=run_arguments,
-            capture_output=False,
-            stdin=DEVNULL
-        )
+    output_directories: set[Path] = set()
+    commands = list[Sequence[str | Path]]()
+    for a, b in plans:
+        output_directories.add(a.parent)
+        commands.append(b)
+
+    if create_parent_directories:
+        for directory_path in output_directories:
+            directory_path.mkdir(exist_ok=True, parents=True)
+
+    with ThreadPoolExecutor(max_workers=max_ffmpeg_workers_amount) as executor:
+        executor.map(run, commands)
 
 
 @dataclass
@@ -647,6 +658,12 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
         action=ExtendConstAction, const=["-codec", "copy"], dest="ffmpeg_extra_arguments",
         help="add \"-codec copy\" options to ffmpeg run")
 
+    argument_parser.add_argument("--max-ffmpeg-workers-amount", "--max-ffmpeg-workers", "--ffmpeg-workers",
+        type=lambda arg: None if arg in {"-", "auto"} else int(arg),
+        default=1,
+        help="max amount of parallel ffmpeg processes"
+    )
+
     return argument_parser
 
 
@@ -725,7 +742,8 @@ def main():
         excluded_tags=parsed_arguments.excluded_tags,
         ffmpeg_executable_path=parsed_arguments.ffmpeg_executable_path,
         ffmpeg_extra_arguments=parsed_arguments.ffmpeg_extra_arguments,
-        is_dry_run=parsed_arguments.is_dry_run
+        is_dry_run=parsed_arguments.is_dry_run,
+        max_ffmpeg_workers_amount=parsed_arguments.max_ffmpeg_workers_amount
     )
 
 
