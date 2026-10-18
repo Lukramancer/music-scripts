@@ -3,12 +3,16 @@
 from abc import ABC as AbstractBaseClass
 from abc import abstractmethod as abstract_method
 from argparse import REMAINDER, ArgumentParser
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from csv import DictWriter as TableDictWriter
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from itertools import zip_longest
+from enum import Enum
+from itertools import pairwise, starmap
 from pathlib import Path
 from re import compile as compile_regexp
+from subprocess import DEVNULL
 from subprocess import run as run_subprocess
 from typing import Any, ClassVar, Optional, Self, override
 
@@ -249,70 +253,20 @@ TAGS: list[tuple[str, str]] = [
 ]
 
 
-def get_cue_sheet_ffmpeg_extraction_runs(
-    cue_sheet: CueSheet,
-    parent_directory: str | Path = ".",
-    output_file_name_formatting: str = "./{artist}/{album}/{track:02}. {title}.{file_suffix}",
-    extra_ffmpeg_arguments: Optional[list[str | Path]] = None
-) -> Iterable[tuple[CueTrack, Path, list[str | Path]]]:
-    # HURT: that can be made lazy, but there still is
-    #   no sliding_window with "gap" feature
-    tracks: list[CueTrack] = list(cue_sheet.get_tracks())
-    for track, next_track in zip_longest(tracks[0:], tracks[1:]):
-        ffmpeg_arguments: list[str | Path] = ["ffmpeg"]
-
-        track_file_path_str = str(parent_directory)
-        if not track_file_path_str.endswith("/"):
-            track_file_path_str += "/"
-        track_file_path_str += str(track.file.path)
-        ffmpeg_arguments.extend(("-i", track_file_path_str))
-
-        ffmpeg_arguments.extend(("-ss", track.get_start_position().to_time_specifier()))
-
-        if next_track is not None:
-            ffmpeg_arguments.extend(("-to", next_track.get_lowest_position().to_time_specifier()))
-
-        formattings: dict[str, Any] = {}
-        for tag_key, tag in TAGS:
-            if (tag_value := track.get_tag(tag_key)) is not None:
-                ffmpeg_arguments.extend(("-metadata", f"{tag}={tag_value}"))
-                formattings[tag] = tag_value
-
-        formattings["file_suffix"] = track.file.path.suffix
-
-        if extra_ffmpeg_arguments is not None:
-            ffmpeg_arguments.extend(extra_ffmpeg_arguments)
-
-        output_file_path: Path = Path(output_file_name_formatting.format_map(formattings))
-        ffmpeg_arguments.append(output_file_path)
-
-        yield (track, output_file_path, ffmpeg_arguments)
+TimedTrack = tuple[CueTrack, str, Optional[str]]
 
 
-def run_cue_sheet_ffmpeg_extractions(
-    cue_sheet: CueSheet,
-    parent_directory: str | Path = ".",
-    output_file_name_formatting: str = "./{artist}/{album}/{number:0>2}. {title}.{file_suffix}",
-    create_output_files_parent_directories: bool = True,
-    ffmpeg_executable_path: Path = Path("ffmpeg"),
-    extra_ffmpeg_arguments: Optional[list[str | Path]] = None,
-    is_dry_run: Optional[bool] = False
-):
-    ffmpeg_runs_arguments: Iterable[tuple[CueTrack, Path, list[str | Path]]] = get_cue_sheet_ffmpeg_extraction_runs(
-        cue_sheet=cue_sheet,
-        parent_directory=parent_directory,
-        output_file_name_formatting=output_file_name_formatting,
-        extra_ffmpeg_arguments=extra_ffmpeg_arguments
-    )
+def get_cue_tracks_with_timings(cue_sheet: CueSheet) -> Iterator[TimedTrack]:
+    for track, next_track in pairwise(cue_sheet.get_tracks()):
+        yield \
+            track, \
+            track.get_start_position().to_time_specifier(), \
+            next_track.get_lowest_position().to_time_specifier()
+        
+        last_cue_track = next_track
 
-    for cue_track, output_file_path, ffmpeg_run_arguments in ffmpeg_runs_arguments:
-        if is_dry_run:
-            print(*ffmpeg_run_arguments)
-        else:
-            if create_output_files_parent_directories:
-                output_file_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            run_subprocess(executable=ffmpeg_executable_path, args=ffmpeg_run_arguments)
+    yield last_cue_track, \
+        last_cue_track.get_start_position().to_time_specifier(), None
 
 
 def parse_cue_sheet_file(cue_sheet_file_path: Path, cue_sheet_file_encoding: Optional[str] = "utf-8"):
@@ -320,30 +274,138 @@ def parse_cue_sheet_file(cue_sheet_file_path: Path, cue_sheet_file_encoding: Opt
         return CueSheet.parse_commands(map(str.rstrip, cue_sheet_file))
 
 
+def extract_tags(track: CueTrack) -> dict[str, str]:
+    formattings: dict[str, Any] = {}
+    for tag_key, tag in TAGS:
+        if (tag_value := track.get_tag(tag_key)) is not None:
+            formattings[tag] = tag_value
+
+    return formattings
+
+
+ExecutionStrategy = Callable[[Iterator[TimedTrack]], Any]
+
+
+@dataclass
+class FfmpegCommandBaseStrategy(AbstractBaseClass):
+    parent_directory_path: Path = Path(".")
+    output_file_name_formatting: str = "./{artist}/{album}/{track:02}. {title}{file_suffix}"
+    extra_ffmpeg_arguments: Optional[list[str | Path]] = None
+
+    def get_ffmpeg_extraction_arguments(self, track: CueTrack, start: str, end: Optional[str]) -> list[str | Path]:
+        ffmpeg_arguments: list[str | Path] = [
+            "ffmpeg",
+            "-i", self.parent_directory_path / track.file.path,
+            "-ss", start
+        ]
+
+        if end is not None:
+            ffmpeg_arguments.extend(("-to", end))
+
+        formattings = extract_tags(track)
+        for tag_name, tag_value in formattings.items():
+            ffmpeg_arguments.extend(("-metadata", f"{tag_name}={tag_value}"))
+    
+        if self.extra_ffmpeg_arguments is not None:
+            ffmpeg_arguments.extend(self.extra_ffmpeg_arguments)
+    
+        output_file_path: Path = Path(self.output_file_name_formatting.format_map(
+            formattings | {"file_suffix": track.file.path.suffix}
+        ))
+        ffmpeg_arguments.append(output_file_path)
+    
+        return ffmpeg_arguments
+
+    @abstract_method
+    def on_ffmpeg_extractions_commands(self, ffmpeg_extractions_commands: Iterator[Sequence[str | Path]]):
+        ...
+    
+    def __call__(self, tracks_with_timings: Iterator[TimedTrack]):
+        self.on_ffmpeg_extractions_commands(starmap(self.get_ffmpeg_extraction_arguments, tracks_with_timings))
+
+
+class FfmpegCommandDryStrategy(FfmpegCommandBaseStrategy):
+    @override
+    def on_ffmpeg_extractions_commands(self, ffmpeg_extractions_commands: Iterator[Sequence[str | Path]]):
+        for ffmpeg_extraction_command in ffmpeg_extractions_commands:
+            print(*ffmpeg_extraction_command)
+
+
+@dataclass
+class FfmpegCommandMultithreadStrategy(FfmpegCommandBaseStrategy):
+    max_workers_amount: Optional[int] = None
+    ffmpeg_exectuable_path: Optional[Path | str] = None
+
+    def _start_ffmpeg_process(self, ffmpeg_extraction_command: Sequence[str | Path]):
+        run_subprocess(
+            executable=self.ffmpeg_exectuable_path,
+            args=ffmpeg_extraction_command,
+            stdin=DEVNULL
+        )
+    
+    @override
+    def on_ffmpeg_extractions_commands(self, ffmpeg_extractions_commands: Iterator[Sequence[str | Path]]):
+        with ThreadPoolExecutor(max_workers=self.max_workers_amount) as executor:
+            executor.map(self._start_ffmpeg_process, ffmpeg_extractions_commands)
+
+
+@dataclass
+class TableWriteStrategy:
+    file_path: Path | int
+    delimiter: str
+
+    def _write_table(self, tags_set: set[str], tracks_with_timings: Iterable[TimedTrack]):
+        with open(self.file_path, mode="wt") as table_file:
+            columns_names = ["path", "start", "end"]
+            columns_names.extend(tags_set)
+            
+            table_dict_writer = TableDictWriter(table_file, fieldnames=columns_names, delimiter=self.delimiter)
+            
+            table_dict_writer.writeheader()
+            for track, track_start, track_end in tracks_with_timings:
+                row = {
+                    "path": track.file.path,
+                    "start": track_start,
+                    "end": track_end
+                }
+                row |= extract_tags(track)
+
+                table_dict_writer.writerow(row)
+                
+    def __call__(self, tracks_with_timings: Iterator[TimedTrack]):
+        tags_set: set[str] = set[str]()
+        gathered_tracks: list[TimedTrack] = []
+        for track_info in tracks_with_timings:
+            tags = extract_tags(track_info[0])
+            tags_set.update(tags.keys())
+            gathered_tracks.append(track_info)
+
+        self._write_table(tags_set, gathered_tracks)
+
+
 def perform(
     cue_sheet_file_path: Path,
-    cue_sheet_file_encoding: str = "utf-8",
-    parent_directory_replacement: Optional[str | Path] = None,
-    output_file_name_formatting: str = "./{artist}/{album}/{number:02}. {title}.{file_suffix}",
-    create_output_files_parent_directories: bool = True,
-    ffmpeg_executable_path: Path = Path("ffmpeg"),
-    extra_ffmpeg_arguments: Optional[list[str | Path]] = None,
-    is_dry_run: Optional[bool] = False
+    cue_sheet_file_encoding: Optional[str],
+    execution_strategy: ExecutionStrategy
 ):
     cue_sheet = parse_cue_sheet_file(
         cue_sheet_file_path=cue_sheet_file_path,
         cue_sheet_file_encoding=cue_sheet_file_encoding
     )
 
-    run_cue_sheet_ffmpeg_extractions(
-        cue_sheet=cue_sheet,
-        parent_directory=(parent_directory_replacement if parent_directory_replacement is not None else cue_sheet_file_path.parent),
-        output_file_name_formatting=output_file_name_formatting,
-        create_output_files_parent_directories=create_output_files_parent_directories,
-        ffmpeg_executable_path=ffmpeg_executable_path,
-        extra_ffmpeg_arguments=extra_ffmpeg_arguments,
-        is_dry_run=is_dry_run
-    )
+    plans = get_cue_tracks_with_timings(cue_sheet)
+
+    execution_strategy(plans)
+
+
+def type_with_special_value[T, D](type_factory: Callable[[str], T], default_str: str, default_value: D) -> Callable[[str], T | D]:
+    return lambda arg: default_value if arg == default_str else type_factory(arg)
+
+
+class ExecutionStrategyChoices(Enum):
+    DRY = "dry"
+    EXTRACT = "extract"
+    TABLE = "table"
 
 
 def create_argument_parser() -> ArgumentParser:
@@ -356,7 +418,7 @@ def create_argument_parser() -> ArgumentParser:
     arguments_parser.add_argument("--cue-sheet-file-encoding", "--cue-encoding", type=str, default="utf8", help="Encoding of .cue file")
     arguments_parser.add_argument("--parent-directory-replacement", type=str, required=False, help="Replacement for parent directory")
 
-    arguments_parser.add_argument("--output-file-name-formatting", "-o", type=str, default="./{artist}/{album}/{track:0>2}. {title}{file_suffix}", help="Format of path for output files")
+    arguments_parser.add_argument("--output-file-path", "-o", type=str, help="Format of path for output files")
     arguments_parser.add_argument("--create-output-files-parent-directories", "-p", action="store_true", default=False, help="Create parent directories for output files")
 
     arguments_parser.add_argument("--ffmpeg-executable-path", "--ffmpeg", type=Path, default=Path("ffmpeg"), help="Path for ffmpeg executable")
@@ -364,20 +426,69 @@ def create_argument_parser() -> ArgumentParser:
     arguments_parser.add_argument("--ffmpeg-codec-copy", const=["-c", "copy"], action="store_const", dest="extra_ffmpeg_arguments", help="Add \"-c copy\" arguments to ffmpeg run")
     arguments_parser.add_argument("--extra-ffmpeg-arguments", nargs=REMAINDER, default=[], action="extend", type=str, help="Extra arguments passed to ffmpeg during lyrics integration", required=False)
 
-    arguments_parser.add_argument("--dry", action="store_true", default=False, help="Print ffmpeg commands instead of running", dest="is_dry_run")
+    arguments_parser.add_argument("--max-ffmpeg-workers", "--ffmpeg-workers", "--workers", "--max-workers", "-j",
+        type=type_with_special_value(int, "-", None),
+        default=1,
+        help="Max amount of ffmpeg threads")
+
+    arguments_parser.set_defaults(
+        execution_strategy_choice=ExecutionStrategyChoices.EXTRACT
+    )
+    execution_strategy_choice_arguments_group = arguments_parser.add_mutually_exclusive_group()
+    execution_strategy_choice_arguments_group.add_argument("--dry",
+        action="store_const", const=ExecutionStrategyChoices.DRY, dest="execution_strategy_choice",
+        help="Print ffmpeg commands instead of running"
+    )
+    execution_strategy_choice_arguments_group.add_argument("--write-table",
+        action="store_const", const=ExecutionStrategyChoices.TABLE, dest="execution_strategy_choice",
+        help="Generate table of tracks"
+    )
+
+    arguments_parser.add_argument("--table-delimeter", type=str, default='\t', help="Delimeter used in output table")
 
     return arguments_parser
 
 
-def main(arguments, output):
+def main(arguments: Iterable[str] | None = None):
     arguments_parser = create_argument_parser()
 
     parsed_arguments = arguments_parser.parse_args(arguments)
 
-    perform(**vars(parsed_arguments))
+    if parsed_arguments.execution_strategy_choice == ExecutionStrategyChoices.DRY:
+        execution_strategy = FfmpegCommandDryStrategy(
+            parent_directory_path=parsed_arguments.parent_directory_replacement \
+                if parsed_arguments.parent_directory_replacement is not None else Path.cwd(),
+            output_file_name_formatting=parsed_arguments.output_file_path \
+                if parsed_arguments.output_file_path is not None else "./{artist}/{album}/{track:0>2}. {title}.wav",
+            extra_ffmpeg_arguments=parsed_arguments.extra_ffmpeg_arguments
+        )
+    elif parsed_arguments.execution_strategy_choice == ExecutionStrategyChoices.EXTRACT:
+        execution_strategy = FfmpegCommandMultithreadStrategy(
+            parent_directory_path=parsed_arguments.parent_directory_replacement \
+                if parsed_arguments.parent_directory_replacement is not None else Path.cwd(),
+            output_file_name_formatting=parsed_arguments.output_file_path \
+                if parsed_arguments.output_file_path is not None else "./{artist}/{album}/{track:0>2}. {title}.wav",
+            extra_ffmpeg_arguments=parsed_arguments.extra_ffmpeg_arguments,
+            ffmpeg_exectuable_path=parsed_arguments.ffmpeg_executable_path,
+            max_workers_amount=parsed_arguments.max_ffmpeg_workers
+        )
+    elif parsed_arguments.execution_strategy_choice == ExecutionStrategyChoices.TABLE:
+        execution_strategy = TableWriteStrategy(
+            file_path=parsed_arguments.output_file_path if parsed_arguments.output_file_path is not None else 1,
+            delimiter=parsed_arguments.table_delimeter if parsed_arguments.table_delimeter is not None else "\t"
+        )
+    else:
+        raise ValueError("Could not determine execution strategy (dry/extract/table), check provided arguments")
+    
+
+    perform(
+        cue_sheet_file_path=parsed_arguments.cue_sheet_file_path,
+        cue_sheet_file_encoding=parsed_arguments.cue_sheet_file_encoding,
+        execution_strategy=execution_strategy
+    )
 
 
 if __name__ == "__main__":
-    from sys import argv, stdout
+    from sys import argv
 
-    main(argv[1:], stdout)
+    main(argv[1:])
