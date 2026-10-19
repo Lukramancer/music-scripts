@@ -3,7 +3,7 @@
 from abc import ABC as AbstractBaseClass
 from abc import abstractmethod as abstract_method
 from argparse import Action, ArgumentParser, Namespace
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from csv import DictReader as TableDictReader
 from dataclasses import dataclass
@@ -440,6 +440,18 @@ def generate_output_file_path(
     return Path(output_file_path_format.format_map(output_file_path_tags))
 
 
+def evaluate_tracks_tags(
+    tracks: Iterable[Track],
+    tags_processors: list[TagsProcessor]
+) -> Iterator[tuple[Track, Tags]]:
+    for track in tracks:
+        track_tags, track_duration, track_path = track.get_initial_info()
+        for tags_processor in tags_processors:
+            track_tags = tags_processor(track_tags, track_path, track_duration)    
+            
+        yield track, track_tags
+
+
 def plan(
     tracks: Iterable[Track],
     tags_processors: list[TagsProcessor],
@@ -449,11 +461,7 @@ def plan(
     excluded_tags: Optional[list[str]] = None,
     ffmpeg_extra_arguments: Optional[list[str | Path]] = None
 ) -> Iterable[tuple[Path, list[str | Path]]]:
-    for track in tracks:
-        track_tags, track_duration, track_path = track.get_initial_info()
-        for tags_processor in tags_processors:
-            track_tags = tags_processor(track_tags, track_path, track_duration)
-
+    for track, track_tags in evaluate_tracks_tags(tracks, tags_processors):
         output_file_path = generate_output_file_path(
             track_tags,
             output_file_path_format,
