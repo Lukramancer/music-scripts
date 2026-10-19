@@ -536,7 +536,7 @@ class TracksTable:
         return lambda file_path: cls(cls.get_file_path(file_path), delimiter)
     
 
-def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Optional[Path] = None) -> ArgumentParser:
+def create_argument_parser() -> ArgumentParser:
     argument_parser = ArgumentParser()
 
     input_argument_group = argument_parser.add_argument_group("input")
@@ -635,11 +635,11 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
     ffmpeg_argument_group = argument_parser.add_argument_group("ffmpeg")
     ffmpeg_argument_group.add_argument(
         "--ffmpeg-executable-path", "--ffmpeg",
-        type=Path, default=ffmpeg_path,
+        type=Path, default=None,
         help="path to ffmpeg executable")
     ffmpeg_argument_group.add_argument(
         "--ffprobe-executable-path", "--ffprobe",
-        type=Path, default=ffprobe_path,
+        type=Path, default=None,
         help="path to ffprobe executable")
     ffmpeg_argument_group.add_argument(
         "--ffmpeg-extra-arguments",
@@ -715,13 +715,7 @@ def extract_file_slice_tracks_from_parsed_arguments(parsed_arguments: Namespace,
 
 
 def main():
-    from shutil import which
-
-    ffmpeg_path_str, ffprobe_path_str = which("ffmpeg"), which("ffprobe")
-    ffmpeg_path: Optional[Path] = Path(ffmpeg_path_str) if ffmpeg_path_str is not None else None
-    ffprobe_path: Optional[Path] = Path(ffprobe_path_str) if ffprobe_path_str is not None else None
-
-    argument_parser = create_argument_parser(ffmpeg_path, ffprobe_path)
+    argument_parser = create_argument_parser()
     parsed_arguments = argument_parser.parse_args()
 
     ffprobe_path = parsed_arguments.ffprobe_path
