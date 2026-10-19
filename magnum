@@ -667,17 +667,15 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
     return argument_parser
 
 
-def extract_tracks_from_parsed_arguments(parsed_arguments: Namespace) -> Iterable[Track]:
-    tracks = list[Track]()
-    
-    ffprobe_path: Optional[Path] = parsed_arguments.ffprobe_executable_path
-
+def extract_file_tracks_from_parsed_arguments(parsed_arguments: Namespace, ffprobe_path: Optional[Path] = None) -> Iterable[FileTrack]:
     file_tracks_paths: Optional[list[Path]] = parsed_arguments.file_tracks_paths
     if ffprobe_path is not None and file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
-        tracks.extend(FileTrack.from_path(file_track_path, ffprobe_path) for file_track_path in file_tracks_paths)
+        yield from (FileTrack.from_path(file_track_path, ffprobe_path) for file_track_path in file_tracks_paths)
     elif file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
         raise ValueError("ffprobe was not found")
 
+
+def extract_file_slice_tracks_from_parsed_arguments(parsed_arguments: Namespace, ffprobe_path: Optional[Path] = None) -> Iterable[FileSliceTrack]:
     file_slice_tracks_tables = parsed_arguments.file_slice_tracks_tables \
         if parsed_arguments.file_slice_tracks_tables is not None else []
     for file_slice_tracks_table in file_slice_tracks_tables:
@@ -705,7 +703,7 @@ def extract_tracks_from_parsed_arguments(parsed_arguments: Namespace) -> Iterabl
                 else:
                     raise TypeError(f"column \"path\" was not specified or has incorrect type at row \"{row_number}\" in file \"{file_slice_tracks_table.file_path}\"")
 
-                tracks.append(FileSliceTrack(
+                yield FileSliceTrack(
                     ffprobe_path=ffprobe_path,
                     file_path=Path(file_path_str),
                     start=FfmpegTimestamp.from_string(start) if start is not None else None,
@@ -717,9 +715,7 @@ def extract_tracks_from_parsed_arguments(parsed_arguments: Namespace) -> Iterabl
                             isinstance(column_name, str) and \
                             isinstance(column_value, str) and len(column_value) > 0
                     }
-                ))
-
-    return tracks
+                )
 
 
 def main():
@@ -732,7 +728,11 @@ def main():
     argument_parser = create_argument_parser(ffmpeg_path, ffprobe_path)
     parsed_arguments = argument_parser.parse_args()
 
-    tracks: list[Track] = list(extract_tracks_from_parsed_arguments(parsed_arguments))
+    ffprobe_path = parsed_arguments.ffprobe_path
+
+    tracks: list[Track] = []
+    tracks.extend(extract_file_tracks_from_parsed_arguments(parsed_arguments, ffprobe_path))
+    tracks.extend(extract_file_slice_tracks_from_parsed_arguments(parsed_arguments, ffprobe_path))
 
     process(
         tracks=tracks,
