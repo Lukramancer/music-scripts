@@ -34,10 +34,10 @@ class Track(AbstractBaseClass):
 @dataclass
 class FileTrack(Track):
     file_path: Path
-    ffprobe_path: Path
+    ffprobe_path: Optional[Path]
 
     @classmethod
-    def from_path(cls, file_track_path: Path, ffprobe_path: Path):
+    def from_path(cls, file_track_path: Path, ffprobe_path: Optional[Path]):
         return cls(file_track_path, ffprobe_path)
 
     @override
