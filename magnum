@@ -36,10 +36,6 @@ class FileTrack(Track):
     file_path: Path
     ffprobe_path: Optional[Path]
 
-    @classmethod
-    def from_path(cls, file_track_path: Path, ffprobe_path: Optional[Path]):
-        return cls(file_track_path, ffprobe_path)
-
     @override
     def get_ffmpeg_extraction_arguments(self) -> list[str | Path]:
         return ["-i", self.file_path]
@@ -670,7 +666,7 @@ def create_argument_parser(ffmpeg_path: Optional[Path] = None, ffprobe_path: Opt
 def extract_file_tracks_from_parsed_arguments(parsed_arguments: Namespace, ffprobe_path: Optional[Path] = None) -> Iterable[FileTrack]:
     file_tracks_paths: Optional[list[Path]] = parsed_arguments.file_tracks_paths
     if ffprobe_path is not None and file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
-        yield from (FileTrack.from_path(file_track_path, ffprobe_path) for file_track_path in file_tracks_paths)
+        yield from (FileTrack(file_track_path, ffprobe_path) for file_track_path in file_tracks_paths)
     elif file_tracks_paths is not None and file_tracks_paths.__len__() > 0:
         raise ValueError("ffprobe was not found")
 
